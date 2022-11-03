@@ -1,0 +1,764 @@
+---
+title: "Biocrates_Microbiome"
+author: "Kristen James"
+date: "6/9/2022"
+output: html_document
+---
+
+Does peak-TMAO group relate to the gut microbiome?
+
+To answer this, load the phyloseq (PS) object and alpha-stat data used in FL100_TMAO. Modify the PS object to include biocrates data of interest. See if alpha and beta diversity differ by peak TMAO group. Get peak TMAO group info from TMAO_Meal_Response.Rmd file. 
+
+```{r set up}
+library(phyloseq)
+# Clear environment to start fresh (if necessary)
+rm(list = ls())
+
+# PSO
+load(file = "../../Data/from_FL100_TMAO/PSOtmao1G_211118.RData") #PSOtmao1G
+#PSO <- PSOtmao1G # shorter name
+
+# Get sample data which includes alpha stats
+df <- as(sample_data(PSOtmao1G), "data.frame")
+colnames(df)
+
+# Get biocrates data and peak group
+#phen <- readRDS("../../Data/Processed/dfwide_metavariables_n97.rds")
+phen <- read.csv("../../Data/Processed/dfwide_metavariables_n97_inflam_eth.csv", row.names = 1)
+colnames(phen)
+# Try not to duplicate columns 
+removeCol <- c("age", "sex", "bmi_final", "age_cat", "bmi_cat", "bmi_final","tmao", "choline", "betaine", "carnitine", "phosphocholine", "creatinine", "endo_ln_rhi")
+phen <- phen[, !(colnames(phen) %in% removeCol)] # subject-ID is not needed
+
+
+# Merge
+df2 <- merge(phen, df, by = 0)
+row.names(df2) <- df2[,"Row.names"]
+df2 <- subset(df2, select =-c(Row.names))
+
+colnames(df2)
+```
+
+```{r alpha diversity}
+#~~~~~~~~~~~~~~~~
+# Compute
+#~~~~~~~~~~~~~~~~
+# Check distribution
+shapiro.test(df2$shannon) # not normal, proceed with caution
+shapiro.test(log(df2$shannon))
+shapiro.test((df2$shannon)^.5)
+
+shapiro.test(df2$faith_pd) # normal
+shapiro.test(df2$observed_otus) # normal
+shapiro.test(log(df2$pielou_e))
+shapiro.test((df2$pielou_e)^.5) # not normal
+
+# Run linear regression looking at potential covariates and the different blood draws
+summary(lm(tmao_log ~ shannon + sex*age + cystatinc_bd1 + bmi_final.x, df2))
+summary(lm(log(TMAO.0) ~ shannon + sex*age + cystatinc_bd1 + bmi_final.x, df2))
+summary(lm(log(TMAO.30) ~ shannon + sex*age + cystatinc_bd1 + bmi_final.x, df2))
+summary(lm(log(TMAO.180) ~ shannon + sex*age + cystatinc_bd1 + bmi_final.x, df2))
+summary(lm(log(TMAO.360) ~ shannon + sex*age + cystatinc_bd1 + bmi_final.x, df2))
+# For manuscript
+summary(lm(log(TMAO.0) ~ shannon + sex*age, df2))
+
+# Run linear regression, bare bones
+summary(lm(shannon ~ peakTMAO, df2))
+summary(lm(faith_pd ~ peakTMAO, df2))
+summary(lm(observed_otus ~ peakTMAO, df2))
+summary(lm(pielou_e ~ peakTMAO, df2))
+
+# Run linear regression, no evidence to include BMI
+summary(lm(log(AUC_TMAO_uM_hour) ~ shannon + sex*age + cystatinc_bd1, df2))
+summary(lm(log(AUC_TMAO_uM_hour) ~ faith_pd + sex*age + cystatinc_bd1, df2))
+summary(lm(log(AUC_TMAO_uM_hour) ~ observed_otus + sex*age + cystatinc_bd1, df2))
+summary(lm(log(AUC_TMAO_uM_hour) ~ pielou_e + sex*age + cystatinc_bd1, df2))
+
+# Cystatin C is not related to AUC-TMAO. Remove it from the model.
+# Report these stats
+summary(lm(log(AUC_TMAO_uM_hour) ~ shannon + sex*age, df2))
+summary(lm(log(AUC_TMAO_uM_hour) ~ faith_pd + sex*age, df2))
+summary(lm(log(AUC_TMAO_uM_hour) ~ observed_otus + sex*age, df2))
+summary(lm(log(AUC_TMAO_uM_hour) ~ pielou_e + sex*age, df2))
+
+plot(df2$AUC_TMAO_uM_hour, df2$shannon)
+
+# Check the residuals 
+resid <- lm(log(AUC_TMAO_uM_hour) ~ shannon + sex*age, df2)
+plot(resid$residuals) # they look random
+summary(resid)
+```
+So alpha diversity is related to fasting values but not AUC-values. 
+
+Scatter plot of alpha diversity measures by AUC
+
+```{r shannon plot }
+summary(lm(AUC_TMAO_uM_min_NegSqrRt ~ shannon + sex*age + cystatinc_bd1, df2))
+
+x_variable <- "Shannon Statistic"
+y_variable <- "Ln of Area Under the Curve TMAO"
+#mdn_cut <- log(median(df2$AUC_TMAO_uM_min_NegSqrRt))
+# Plot
+shannon_plot <- ggplot(df2, aes(y=log(AUC_TMAO_uM_hour), x=shannon)) +
+  geom_point(aes(shape=bmi_cat, color = age_cat)) +
+  #geom_vline(xintercept = mdn_cut, linetype = "dashed") +
+  geom_smooth(method = "lm", se = TRUE, fullrange = F) +
+  theme_bw() + 
+  ylab(y_variable) +
+  xlab(x_variable) +
+  scale_shape_discrete(name="BMI Bin (kg/m^2)", labels=c("18.5-24", "25-29", "30>")) +
+  scale_color_brewer(palette = "Dark2",name="Age Bin (yr)", labels=c("18-33", "34-49", "50-65")) +
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 12), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 12), # label legend text size
+        axis.text.x = element_text(angle = 0, hjust = .25, vjust=0.5))
+shannon_plot
+```
+
+```{r save shannon plot}
+ggsave("../../plots/AUC_TMAO_Shannon_a_diversity_v3.jpg", shannon_plot,
+       width = 8, 
+       height = 5, 
+       dpi = 300)
+```
+
+
+Differential abundance analysis via DESeq2
+
+```{r DESeq2 by peakTMAO}
+library(DESeq2)
+
+# Get TMAO peak column and 
+phenPeak <- phen[,"peakTMAO", F]
+
+# Prune PSO to ones with TMAO peak data
+keepSamp <- rownames(phenPeak)
+PSOtmao1G_sub <- prune_samples(keepSamp, PSOtmao1G)
+PSOtmao1G_sub
+
+# Merge
+phenPeak <- sample_data(phenPeak)
+PSOpeak <- merge_phyloseq(PSOtmao1G_sub, phenPeak)
+colnames(sample_data(PSOpeak))
+
+# Set levels
+sample_data(PSOpeak)$peakTMAO <- factor(sample_data(PSOpeak)$peakTMAO, levels = c("peak0", "peak30", "peak180", "peak360"))
+
+# DESeq analysis - tmao_tertile
+mb <- phyloseq_to_deseq2(PSOpeak, ~ sex + age + bmi_final.x + peakTMAO)
+mb.ratio <- DESeq(mb, test = "LRT", reduced = ~ sex + age + bmi_final.x) # remove variable of interest here, TMAO
+res.ratio <- results(mb.ratio, contrast = c("peakTMAO", "peak0", "peak360")) # Look at most different tertiles
+alpha = 0.05
+sigtab = res.ratio[which(res.ratio$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(PSOpeak)[rownames(sigtab), ], "matrix"))
+sigtab$family_genus <- paste0(sigtab$Family, sigtab$Genus)
+head(sigtab)
+
+res.ratio2 <- results(mb.ratio, contrast = c("peakTMAO", "peak0", "peak30")) # Look at 0 and 180 grp
+alpha = 0.05
+sigtab2 = res.ratio2[which(res.ratio2$padj < alpha), ]
+sigtab2 = cbind(as(sigtab2, "data.frame"), as(tax_table(PSOpeak)[rownames(sigtab2), ], "matrix"))
+sigtab2$family_genus <- paste0(sigtab2$Family, sigtab2$Genus)
+head(sigtab2)
+
+```
+
+```{r DESeq plot peakTMAO }
+#~~~~~~~~~~~~~~~
+# Plot Results
+#~~~~~~~~~~~~~~~
+resOTU <- rownames(sigtab)
+otuData <- as.data.frame(otu_table(PSOpeak))
+otuData_desRes <- otuData[rownames(otuData) %in% resOTU,]
+#otuData_desRes <- as.data.frame(t(otuData_desRes))
+# Get sample data groupings
+sampleData <- as.data.frame(sample_data(PSOpeak))
+sampleData <- subset(sampleData, select = c(peakTMAO, tmao_mdn, tmao_quantile, tmao_tertile, tmao))
+# Get tax table
+taxaData <- as.data.frame(tax_table(PSOpeak))
+taxaData_res <- taxaData[rownames(taxaData) %in% resOTU,]
+taxaData_res$FamilyGenus <- paste0(taxaData_res$Family, taxaData_res$Genus)
+# Merge
+ggData <- merge(taxaData_res, otuData_desRes, by = 0)
+rownames(ggData) <-  ggData$FamilyGenus
+ggData <- ggData[,-(1:9)]
+ggData <- as.data.frame(t(ggData))
+ggData <- merge(ggData, sampleData, by = 0)
+rownames(ggData) <- ggData[,"Row.names"]
+ggData <- subset(ggData, select = -c(Row.names))
+# Save a copy of results for plotting
+ggData_G <- ggData
+
+# Loop Plot to view
+nres <- length(resOTU)
+comparisons <- list(c("peak0", "peak30"), c("peak0", "peak180"), c("peak0","peak360"),  c("peak30","peak180"),  c("peak30","peak360"),  c("peak180","peak360") )
+for (i in 1:nres) { 
+    print(ggplot(ggData_G, aes(x = peakTMAO, y = log(ggData_G[,i]))) +
+            geom_boxplot(aes(color=peakTMAO)) +
+            geom_point() +
+            theme_light() +
+            ylab(paste0("Log of", colnames(ggData_G[i]))) +
+            xlab("TMAO Response Type") +
+            scale_color_brewer(palette = "Dark2") +
+            labs(color = "TMAO Response Type") +
+            stat_compare_means(comparisons=comparisons)
+    )
+}
+
+
+presentationPlot <- ggplot(ggData_G, aes(x = peakTMAO, y = log(ggData_G[,1]))) +
+            geom_boxplot(aes(color=peakTMAO)) +
+            geom_point() +
+            theme_light() +
+            ylab(paste0("Log of", colnames(ggData_G[1]))) +
+            xlab("TMAO Response Type") +
+            scale_color_brewer(palette = "Dark2") +
+            labs(color = "TMAO Response Type")
+
+presentationPlot
+
+# Get OTU table info
+taxaData <- as.data.frame(tax_table(PSOpeak))
+unique(taxaData$Family)
+unique(taxaData$Genus)
+```
+
+```{r save plot}
+ggsave("../../plots/AUC_TMAO_DESeq_Prevotella.jpg", presentationPlot,
+       width = 8, 
+       height = 5, 
+       dpi = 300)
+
+```
+
+Repeat looking at AUC-TMAO median
+```{r DESeq2 by AUC median}
+library(DESeq2)
+
+# Make median variable
+median(phen$AUC_TMAO_uM_hour)
+phen$AUC_TMAO_mdn <- ifelse(phen$AUC_TMAO_uM_hour <= median(phen$AUC_TMAO_uM_hour), "less", "greater")
+str(phen$AUC_TMAO_mdn)
+phen$AUC_TMAO_mdn <- factor(phen$AUC_TMAO_mdn, levels = c("less", "greater"), labels = c("less", "greater"))
+
+# Get TMAO peak column and 
+phenPeak <- phen[,"AUC_TMAO_mdn", F]
+
+# Prune PSO to ones with TMAO peak data
+keepSamp <- rownames(phenPeak)
+PSOtmao1G_sub.AUC <- prune_samples(keepSamp, PSOtmao1G)
+
+# Merge
+phenPeak <- sample_data(phenPeak)
+PSO.AUC <- merge_phyloseq(PSOtmao1G_sub.AUC, phenPeak)
+colnames(sample_data(PSO.AUC))
+
+# Set levels
+sample_data(PSO.AUC)$AUC_TMAO_mdn <- factor(sample_data(PSO.AUC)$AUC_TMAO_mdn, levels = c("less", "greater"))
+sample_data(PSO.AUC)$screen_sex <- factor(sample_data(PSO.AUC)$screen_sex, levels = c("Female", "Male"))
+check <- sample_data(PSO.AUC)
+str(check$screen_sex) # male=2
+str(check$AUC_TMAO_mdn)
+
+# DESeq analysis - tmao_tertile
+mb <- phyloseq_to_deseq2(PSO.AUC, ~ screen_sex + age + bmi_final.x + AUC_TMAO_mdn)
+mb.ratio <- DESeq(mb, test = "LRT", reduced = ~ screen_sex + age + bmi_final.x) # remove variable of interest here, TMAO
+res.ratio <- results(mb.ratio, contrast = c("AUC_TMAO_mdn", "less", "greater")) # Look at most different tertiles
+alpha = 0.05
+sigtab = res.ratio[which(res.ratio$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(PSO.AUC)[rownames(sigtab), ], "matrix"))
+sigtab$family_genus <- paste0(sigtab$Family, sigtab$Genus)
+head(sigtab)
+
+```
+
+Save
+```{r}
+write.csv(sigtab, "../../tables/Microbiome_AUCTMAO_DESeq2.csv")
+```
+
+```{r DESeq plot AUC-TMAO}
+#~~~~~~~~~~~~~~~
+# Plot Results
+#~~~~~~~~~~~~~~~
+resOTU <- rownames(sigtab)
+otuData <- as.data.frame(otu_table(PSO.AUC))
+otuData_desRes <- otuData[rownames(otuData) %in% resOTU,]
+#otuData_desRes <- as.data.frame(t(otuData_desRes))
+# Get sample data groupings
+sampleData <- as.data.frame(sample_data(PSO.AUC))
+sampleData <- subset(sampleData, select = c(AUC_TMAO_mdn))
+# Get tax table
+taxaData <- as.data.frame(tax_table(PSO.AUC))
+taxaData_res <- taxaData[rownames(taxaData) %in% resOTU,]
+taxaData_res$FamilyGenus <- paste0(taxaData_res$Family, taxaData_res$Genus)
+# Merge
+ggData <- merge(taxaData_res, otuData_desRes, by = 0)
+rownames(ggData) <-  ggData$FamilyGenus
+ggData <- ggData[,-(1:9)]
+ggData <- as.data.frame(t(ggData))
+ggData <- merge(ggData, sampleData, by = 0)
+rownames(ggData) <- ggData[,"Row.names"]
+ggData <- subset(ggData, select = -c(Row.names))
+# Save a copy of results for plotting
+ggData_G <- ggData
+
+# Loop Plot to view
+nres <- length(resOTU)
+comparisons <- list(c("less", "greater") )
+for (i in 1:nres) { 
+    print(ggplot(ggData_G, aes(x = AUC_TMAO_mdn, y = log(ggData_G[,i]))) +
+            geom_boxplot(aes(color=AUC_TMAO_mdn)) +
+            geom_point() +
+            theme_bw() +
+            ylab(paste0("Log of", colnames(ggData_G[i]))) +
+            xlab("AUC-TMAO Median Group") +
+            scale_color_brewer(palette = "Dark2") +
+            labs(color = "TMAO Response Type") +
+            stat_compare_means(comparisons=comparisons, method = "wilcox.test")
+    )
+}
+
+
+presentationPlot <- ggplot(ggData_G, aes(x = AUC_TMAO_mdn, y = log(ggData_G[,1]))) +
+            geom_boxplot(aes(color=AUC_TMAO_mdn)) +
+            geom_point() +
+            theme_bw() +
+            ylab(paste0("Log of", colnames(ggData_G[1]))) +
+            xlab("AUC-TMAO Median Group") +
+            scale_color_brewer(palette = "Dark2") +
+            labs(color = "AUC-TMAO Median Group")
+
+presentationPlot
+
+# All results plot
+sigtabgen = subset(sigtab, !is.na(Genus))
+# Phylum order
+x = tapply(sigtabgen$log2FoldChange, sigtabgen$Phylum, function(x) max(x))
+x = sort(x, TRUE)
+sigtabgen$Phylum = factor(as.character(sigtabgen$Phylum), levels=names(x))
+# Genus order
+x = tapply(sigtabgen$log2FoldChange, sigtabgen$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtabgen$Genus = factor(as.character(sigtabgen$Genus), levels=names(x))
+DESeqPlot <- ggplot(sigtabgen, aes(y=family_genus, x=log2FoldChange, color=Phylum)) + 
+  geom_vline(xintercept = 0.0, color = "gray", size = 0.5) +
+  geom_point(size=3) + 
+  ylab("Taxonomy") +
+  xlab("Log2 Fold Change") + 
+  scale_color_brewer(palette = "Dark2") +
+  theme_bw() +
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 12), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 12), # label legend text size
+        axis.text.x = element_text(angle = 0),
+        axis.text.y = element_text(angle = 0))
+DESeqPlot
+
+# Save
+tiff("../../plots/DESeq2_Genus_AUCTMAOmedian_221031.tiff", width = 8, height = 4, units = 'in', res = 300)
+DESeqPlot
+dev.off()
+
+# How many non-0s?
+sum(ggData_G$` f__Prevotellaceae g__Prevotella` != 0) #46
+sum(ggData_G$` f__Veillonellaceae g__Dialister` != 0) # 37
+sum(ggData_G$` f__Coriobacteriaceae g__Eggerthella` != 0) # 23
+sum(ggData_G$` f__Erysipelotrichaceae g__Catenibacterium` != 0) # 19
+sum(ggData_G$` f__Erysipelotrichaceae g__Clostridium` != 0) # 57
+sum(ggData_G$` f__Lactobacillaceae g__Lactobacillus` != 0) # 19
+
+# % range in cohort 
+(19/97)*100 #19.6%
+(57/97)*100 #58.8%
+```
+
+```{r beta diversity}
+library(vegan)
+
+# PCoA
+PCoA_WU <- ordinate(PSOpeak, "PCoA", "wunifrac")
+PCoA_UnWU <- ordinate(PSOpeak, "PCoA", "uunifrac")
+PCoA_BC <- ordinate(PSOpeak, "PCoA", "bray")
+
+# Calculate distance matrix
+dismax_wu = phyloseq::distance(PSOpeak, method="wunifrac", type = "samples")
+dismax_uwu = phyloseq::distance(PSOpeak, method="unifrac", type = "samples")
+dismax_bc = phyloseq::distance(PSOpeak, method="bray", type = "samples")
+
+# Beta dispersion
+# Check AUC and peakTMAO variables
+df.auc <- as(sample_data(PSO.AUC), "data.frame")
+# WU
+bdis <- betadisper(dismax_wu, df2$peakTMAO)
+permutest(bdis) # NS, good
+boxplot(bdis, las = 2)
+bdis <- betadisper(dismax_wu, df.auc$AUC_TMAO_mdn)
+permutest(bdis) # NS, good
+boxplot(bdis, las = 2)
+# UWU
+bdis <- betadisper(dismax_uwu, df2$peakTMAO)
+permutest(bdis) # NS, good
+boxplot(bdis, las = 2)
+bdis <- betadisper(dismax_uwu, df.auc$AUC_TMAO_mdn)
+permutest(bdis) # NS, good
+boxplot(bdis, las = 2)
+# BC
+bdis <- betadisper(dismax_bc, df2$peakTMAO)
+permutest(bdis) # NS, good
+boxplot(bdis, las = 2)
+bdis <- betadisper(dismax_bc, df.auc$AUC_TMAO_mdn)
+permutest(bdis) # NS, good
+boxplot(bdis, las = 2)
+
+# ADONIS (perMANOVA) analysis
+adonis2(dismax_wu ~ tmao_log + sex + age + bmi_final.y, data=df2, method = "wunifrac", by = "margin", perm=999) # df
+adonis2(dismax_uwu ~ tmao_log + sex + age + bmi_final.y, data=df2, method = "unifrac", by = "margin", perm=999) # df
+adonis2(dismax_bc ~ tmao_log + sex + age + bmi_final.y, data=df2, method = "bray", by = "margin", perm=999) # df
+# note, the by = "margin" command makes the order of the covariates not matter in the model
+
+# ADONIS (perMANOVA) analysis
+adonis2(dismax_wu ~ log(AUC_TMAO_uM_hour) + sex + age + bmi_final.y, data=df2, method = "wunifrac", by = "margin", perm=999) # df
+adonis2(dismax_uwu ~ log(AUC_TMAO_uM_hour) + sex + age + bmi_final.y, data=df2, method = "unifrac", by = "margin", perm=999) # df
+adonis2(dismax_bc ~ log(AUC_TMAO_uM_hour) + sex + age + bmi_final.y, data=df2, method = "bray", by = "margin", perm=999) # df
+
+# ADONIS (perMANOVA) analysis
+adonis2(dismax_wu ~ peakTMAO + sex + age + bmi_final.y, data=df2, method = "wunifrac", by = "margin", perm=999) # df
+adonis2(dismax_uwu ~ peakTMAO + sex + age + bmi_final.y, data=df2, method = "unifrac", by = "margin", perm=999) # df
+adonis2(dismax_bc ~ peakTMAO + sex + age + bmi_final.y, data=df2, method = "bray", by = "margin", perm=999) # df
+
+# Weighted
+betaplot_WU <- plot_ordination(PSOpeak, PCoA_WU, 
+                    color="peakTMAO",
+                    shape = NULL,
+                    axes = 1:2) +
+  scale_color_brewer(palette = "Dark2", labels = c("0", "30", "180", "360")) +
+  stat_ellipse(linetype = 1) +
+  labs(color = "Peak TMAO Group") +
+  theme_bw() + 
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 12), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 12), # label legend text size
+        axis.text.x = element_text(angle = 0, hjust = 0, vjust=0))
+
+  betaplot_WU
+
+ggsave("../../plots/PeakTMAO_WU_b_diversity.jpg", betaplot_WU,
+       width = 8, 
+       height = 5, 
+       dpi = 300)
+  
+# UnWeighted
+betaplot_UnWU <- plot_ordination(PSOpeak, PCoA_UnWU, 
+                    color="peakTMAO",
+                    shape = NULL,
+                    axes = 1:2) +
+  scale_color_brewer(palette = "Dark2", labels = c("0", "30", "180", "360")) +
+  stat_ellipse(linetype = 1) +
+  labs(color = "Peak TMAO Group") +
+  theme_bw() + 
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 12), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 12), # label legend text size
+        axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+betaplot_UnWU
+
+ggsave("../../plots/PeakTMAO_UnWU_b_diversity.jpg", betaplot_UnWU,
+       width = 8, 
+       height = 5, 
+       dpi = 300)
+
+# BC
+betaplot_BC <- plot_ordination(PSOpeak, PCoA_BC, 
+                    color="peakTMAO",
+                    shape = NULL,
+                    axes = 1:2) +
+  scale_color_brewer(palette = "Dark2", labels = c("0", "30", "180", "360")) +
+  stat_ellipse(linetype = 1) +
+  labs(color = "Peak TMAO Group") +
+  theme_minimal() + 
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 12), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 12), # label legend text size
+        axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+betaplot_BC
+
+# NMDS
+PSOpeak.ord <- ordinate(PSOpeak, "NMDS", "bray")
+p1 = plot_ordination(PSOpeak, PSOpeak.ord, type="samples", color="peakTMAO", title="samples") + 
+  stat_ellipse(linetype = 1) 
+print(p1)
+```
+
+Looks a bit of a dead end. PeakTMAO group doesn't clearly differentiate microbiome composition.
+
+Check Firm:Bact ratio
+
+```{r Firmicutes to bacteroidetes ratio per peakTMAO group}
+# Combine to Phylum level
+PSOpeak_Phylum <- tax_glom(PSOpeak, "Phylum", NArm = TRUE)
+
+# Subset by peak group
+PSOpeak_Phylum_peak0 <- subset_samples(PSOpeak_Phylum, peakTMAO == "peak0")
+PSOpeak_Phylum_peak30 <- subset_samples(PSOpeak_Phylum, peakTMAO == "peak30")
+PSOpeak_Phylum_peak180 <- subset_samples(PSOpeak_Phylum, peakTMAO == "peak180")
+PSOpeak_Phylum_peak360 <- subset_samples(PSOpeak_Phylum, peakTMAO == "peak360")
+
+# View
+PSOpeak_Phylum_peak0
+PSOpeak_Phylum_peak30
+PSOpeak_Phylum_peak180
+PSOpeak_Phylum_peak360
+
+#~~~~~~~~~~
+# Peak0
+#~~~~~~~~~~
+# Prevalence - how many samples the taxa is observed in
+prevalence_Phy_peak0 = apply(X = otu_table(PSOpeak_Phylum_peak0),
+               MARGIN = ifelse(taxa_are_rows(PSOpeak_Phylum_peak0), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+prevalence_Phy_peak0 = data.frame(Prevalence = prevalence_Phy_peak0,
+                    TotalAbundance = taxa_sums(PSOpeak_Phylum_peak0), # the total number of occurrences (even if only observed 50 times in 1 sample, the number would be 50)
+                    tax_table(PSOpeak_Phylum_peak0))
+# Firmicutes:Bacteroidetes Abundance Ratio
+# Note, calculating it this way takes total abundance of firm and total abundance of bact in the peak0 group and makes a ratio of them. It doesn't take the mean of every person's ratio.  
+firm_bacter_peak0 <- prevalence_Phy_peak0$TotalAbundance[prevalence_Phy_peak0$Phylum == " p__Firmicutes"] / prevalence_Phy_peak0$TotalAbundance[prevalence_Phy_peak0$Phylum == " p__Bacteroidetes"] 
+
+# To get a mean of every person's ratio: 
+# This method also lets you get statistics like SD
+# Melt PSO data
+mlt_PSOpeak_Phylum_peak0 <- psmelt(PSOpeak_Phylum_peak0)
+# Get and format tax table
+tbl.mlt_PSOpeak_Phylum_peak0 <- as.data.frame(tax_table(PSOpeak_Phylum_peak0))
+tbl.mlt_PSOpeak_Phylum_peak0 <-  tbl.mlt_PSOpeak_Phylum_peak0[,1:2]
+tbl.mlt_PSOpeak_Phylum_peak0$OTU <- row.names(tbl.mlt_PSOpeak_Phylum_peak0)
+# Merge
+all.mlt_PSOpeak_Phylum_peak0 <- merge(tbl.mlt_PSOpeak_Phylum_peak0, mlt_PSOpeak_Phylum_peak0, by = "OTU", all.y = TRUE)
+# Manipulate to get stats
+# only keep firm and bact
+firm_peak0 <- all.mlt_PSOpeak_Phylum_peak0[all.mlt_PSOpeak_Phylum_peak0$Phylum.x == " p__Firmicutes",]
+firm_peak0 <- firm_peak0[,c("Sample", "Abundance")]
+colnames(firm_peak0) <- paste0(colnames(firm_peak0), "_firm")
+bact_peak0 <- all.mlt_PSOpeak_Phylum_peak0[all.mlt_PSOpeak_Phylum_peak0$Phylum.x == " p__Bacteroidetes",]
+bact_peak0 <- bact_peak0[,c("Sample", "Abundance")]
+colnames(bact_peak0) <- paste0(colnames(bact_peak0), "_bact")
+# Merge
+fb_peak0 <- merge(firm_peak0, bact_peak0, by.x = "Sample_firm", by.y = "Sample_bact")
+fb_peak0$FBratio <- (fb_peak0$Abundance_firm / fb_peak0$Abundance_bact)
+# Mean and sd
+mean(fb_peak0$FBratio) #8.25
+sd(fb_peak0$FBratio) #11.44
+
+#~~~~~~~~~~
+# Peak 30
+#~~~~~~~~~~
+# Prevalence - how many samples the taxa is observed in
+prevalence_Phy_peak30 = apply(X = otu_table(PSOpeak_Phylum_peak30),
+               MARGIN = ifelse(taxa_are_rows(PSOpeak_Phylum_peak30), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+prevalence_Phy_peak30 = data.frame(Prevalence = prevalence_Phy_peak30,
+                    TotalAbundance = taxa_sums(PSOpeak_Phylum_peak30), # the total number of occurrences (even if only observed 50 times in 1 sample, the number would be 50)
+                    tax_table(PSOpeak_Phylum_peak30))
+firm_bacter_peak30 <- prevalence_Phy_peak30$TotalAbundance[prevalence_Phy_peak30$Phylum == " p__Firmicutes"] / prevalence_Phy_peak30$TotalAbundance[prevalence_Phy_peak30$Phylum == " p__Bacteroidetes"] 
+
+# To get a mean of every person's ratio: 
+# This method also lets you get statistics like SD
+# Melt PSO data
+mlt_PSOpeak_Phylum_peak30 <- psmelt(PSOpeak_Phylum_peak30)
+# Get and format tax table
+tbl.mlt_PSOpeak_Phylum_peak30 <- as.data.frame(tax_table(PSOpeak_Phylum_peak30))
+tbl.mlt_PSOpeak_Phylum_peak30 <-  tbl.mlt_PSOpeak_Phylum_peak30[,1:2]
+tbl.mlt_PSOpeak_Phylum_peak30$OTU <- row.names(tbl.mlt_PSOpeak_Phylum_peak30)
+# Merge
+all.mlt_PSOpeak_Phylum_peak30 <- merge(tbl.mlt_PSOpeak_Phylum_peak30, mlt_PSOpeak_Phylum_peak30, by = "OTU", all.y = TRUE)
+# Manipulate to get stats
+# only keep firm and bact
+firm_peak30 <- all.mlt_PSOpeak_Phylum_peak30[all.mlt_PSOpeak_Phylum_peak30$Phylum.x == " p__Firmicutes",]
+firm_peak30 <- firm_peak30[,c("Sample", "Abundance")]
+colnames(firm_peak30) <- paste0(colnames(firm_peak30), "_firm")
+bact_peak30 <- all.mlt_PSOpeak_Phylum_peak30[all.mlt_PSOpeak_Phylum_peak30$Phylum.x == " p__Bacteroidetes",]
+bact_peak30 <- bact_peak30[,c("Sample", "Abundance")]
+colnames(bact_peak30) <- paste0(colnames(bact_peak30), "_bact")
+# Merge
+fb_peak30 <- merge(firm_peak30, bact_peak30, by.x = "Sample_firm", by.y = "Sample_bact")
+fb_peak30$FBratio <- (fb_peak30$Abundance_firm / fb_peak30$Abundance_bact)
+# Mean and sd
+mean(fb_peak30$FBratio) #10.28
+sd(fb_peak30$FBratio) #12.94
+
+
+#~~~~~~~~~~
+# Peak 180
+#~~~~~~~~~~
+# Prevalence - how many samples the taxa is observed in
+prevalence_Phy_peak180 = apply(X = otu_table(PSOpeak_Phylum_peak180),
+               MARGIN = ifelse(taxa_are_rows(PSOpeak_Phylum_peak180), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+prevalence_Phy_peak180 = data.frame(Prevalence = prevalence_Phy_peak180,
+                    TotalAbundance = taxa_sums(PSOpeak_Phylum_peak180), # the total number of occurrences (even if only observed 50 times in 1 sample, the number would be 50)
+                    tax_table(PSOpeak_Phylum_peak180))
+# Firmicutes:Bacteroidetes Abundance Ratio
+firm_bacter_peak180 <- prevalence_Phy_peak180$TotalAbundance[prevalence_Phy_peak180$Phylum == " p__Firmicutes"] / prevalence_Phy_peak180$TotalAbundance[prevalence_Phy_peak180$Phylum == " p__Bacteroidetes"] 
+
+# To get a mean of every person's ratio: 
+# This method also lets you get statistics like SD
+# Melt PSO data
+mlt_PSOpeak_Phylum_peak180 <- psmelt(PSOpeak_Phylum_peak180)
+# Get and format tax table
+tbl.mlt_PSOpeak_Phylum_peak180 <- as.data.frame(tax_table(PSOpeak_Phylum_peak180))
+tbl.mlt_PSOpeak_Phylum_peak180 <-  tbl.mlt_PSOpeak_Phylum_peak180[,1:2]
+tbl.mlt_PSOpeak_Phylum_peak180$OTU <- row.names(tbl.mlt_PSOpeak_Phylum_peak180)
+# Merge
+all.mlt_PSOpeak_Phylum_peak180 <- merge(tbl.mlt_PSOpeak_Phylum_peak180, mlt_PSOpeak_Phylum_peak180, by = "OTU", all.y = TRUE)
+# Manipulate to get stats
+# only keep firm and bact
+firm_peak180 <- all.mlt_PSOpeak_Phylum_peak180[all.mlt_PSOpeak_Phylum_peak180$Phylum.x == " p__Firmicutes",]
+firm_peak180 <- firm_peak180[,c("Sample", "Abundance")]
+colnames(firm_peak180) <- paste0(colnames(firm_peak180), "_firm")
+bact_peak180 <- all.mlt_PSOpeak_Phylum_peak180[all.mlt_PSOpeak_Phylum_peak180$Phylum.x == " p__Bacteroidetes",]
+bact_peak180 <- bact_peak180[,c("Sample", "Abundance")]
+colnames(bact_peak180) <- paste0(colnames(bact_peak180), "_bact")
+# Merge
+fb_peak180 <- merge(firm_peak180, bact_peak180, by.x = "Sample_firm", by.y = "Sample_bact")
+fb_peak180$FBratio <- (fb_peak180$Abundance_firm / fb_peak180$Abundance_bact)
+# Mean and sd
+mean(fb_peak180$FBratio) #8.82
+sd(fb_peak180$FBratio) #8.94
+
+#~~~~~~~~~~
+# Peak 360
+#~~~~~~~~~~
+# Prevalence - how many samples the taxa is observed in
+prevalence_Phy_peak360 = apply(X = otu_table(PSOpeak_Phylum_peak360),
+               MARGIN = ifelse(taxa_are_rows(PSOpeak_Phylum_peak360), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+prevalence_Phy_peak360 = data.frame(Prevalence = prevalence_Phy_peak360,
+                    TotalAbundance = taxa_sums(PSOpeak_Phylum_peak360), # the total number of occurrences (even if only observed 50 times in 1 sample, the number would be 50)
+                    tax_table(PSOpeak_Phylum_peak360))
+firm_bacter_peak360 <- prevalence_Phy_peak360$TotalAbundance[prevalence_Phy_peak360$Phylum == " p__Firmicutes"] / prevalence_Phy_peak360$TotalAbundance[prevalence_Phy_peak360$Phylum == " p__Bacteroidetes"] 
+
+# To get a mean of every person's ratio: 
+# This method also lets you get statistics like SD
+# Melt PSO data
+mlt_PSOpeak_Phylum_peak360 <- psmelt(PSOpeak_Phylum_peak360)
+# Get and format tax table
+tbl.mlt_PSOpeak_Phylum_peak360 <- as.data.frame(tax_table(PSOpeak_Phylum_peak360))
+tbl.mlt_PSOpeak_Phylum_peak360 <-  tbl.mlt_PSOpeak_Phylum_peak360[,1:2]
+tbl.mlt_PSOpeak_Phylum_peak360$OTU <- row.names(tbl.mlt_PSOpeak_Phylum_peak360)
+# Merge
+all.mlt_PSOpeak_Phylum_peak360 <- merge(tbl.mlt_PSOpeak_Phylum_peak360, mlt_PSOpeak_Phylum_peak360, by = "OTU", all.y = TRUE)
+# Manipulate to get stats
+# only keep firm and bact
+firm_peak360 <- all.mlt_PSOpeak_Phylum_peak360[all.mlt_PSOpeak_Phylum_peak360$Phylum.x == " p__Firmicutes",]
+firm_peak360 <- firm_peak360[,c("Sample", "Abundance")]
+colnames(firm_peak360) <- paste0(colnames(firm_peak360), "_firm")
+bact_peak360 <- all.mlt_PSOpeak_Phylum_peak360[all.mlt_PSOpeak_Phylum_peak360$Phylum.x == " p__Bacteroidetes",]
+bact_peak360 <- bact_peak360[,c("Sample", "Abundance")]
+colnames(bact_peak360) <- paste0(colnames(bact_peak360), "_bact")
+# Merge
+fb_peak360 <- merge(firm_peak360, bact_peak360, by.x = "Sample_firm", by.y = "Sample_bact")
+fb_peak360$FBratio <- (fb_peak360$Abundance_firm / fb_peak360$Abundance_bact)
+# Mean and sd
+mean(fb_peak360$FBratio) #6.70
+sd(fb_peak360$FBratio) #8.19
+
+#~~~~~~~~~~
+# Are means of ratios from individual people in group statistically different?
+#~~~~~~~~~~
+fb_peak0$PeakGrp <- "peak0"
+fb_peak30$PeakGrp <- "peak30"
+fb_peak180$PeakGrp <- "peak180"
+fb_peak360$PeakGrp <- "peak360"
+# rbind
+fb_all <- rbind(fb_peak0,fb_peak30,fb_peak180,fb_peak360)
+summary(aov(FBratio ~ PeakGrp, fb_all))
+
+#~~~~~~~~~~
+# Compare ratios
+#~~~~~~~~~~
+# from total abundance of group
+cat("Firmicutes:Bacteroidetes ratio peak0:", firm_bacter_peak0)
+cat("Firmicutes:Bacteroidetes ratio peak30:", firm_bacter_peak30)
+cat("Firmicutes:Bacteroidetes ratio peak180:", firm_bacter_peak180)
+cat("Firmicutes:Bacteroidetes ratio peak360:", firm_bacter_peak360)
+# mean of ratios from individual people in group 
+cat("Firmicutes:Bacteroidetes ratio peak0 from person means:", mean(fb_peak0$FBratio))
+cat("Firmicutes:Bacteroidetes ratio peak30 from person means:", mean(fb_peak30$FBratio))
+cat("Firmicutes:Bacteroidetes ratio peak180 from person means:", mean(fb_peak180$FBratio))
+cat("Firmicutes:Bacteroidetes ratio peak360 from person means:", mean(fb_peak360$FBratio))
+```
+
+Are firmicutes related to AUC-TMAO?
+```{r firmicutes and AUC-TMAO}
+# Melt PSO data
+mlt_PSOpeak_Phylum <- psmelt(PSOpeak_Phylum)
+# Get and format tax table
+tbl.mlt_PSOpeak_Phylum <- as.data.frame(tax_table(PSOpeak_Phylum))
+tbl.mlt_PSOpeak_Phylum <-  tbl.mlt_PSOpeak_Phylum[,1:2]
+tbl.mlt_PSOpeak_Phylum$OTU <- row.names(tbl.mlt_PSOpeak_Phylum)
+# Merge
+all.mlt_PSOpeak_Phylum <- merge(tbl.mlt_PSOpeak_Phylum, mlt_PSOpeak_Phylum, by = "OTU", all.y = TRUE)
+# Keep firm
+firm <- all.mlt_PSOpeak_Phylum[all.mlt_PSOpeak_Phylum$Phylum.x == " p__Firmicutes",]
+rownames(firm) <- firm$Sample
+
+# Merge with AUC-TMAO
+firm.df2 <- merge(df2, firm, by = 0)
+
+# stats
+colnames(firm.df2)
+shapiro.test(firm.df2$Abundance)
+shapiro.test(log(firm.df2$Abundance))
+summary(lm(log(AUC_TMAO_uM_hour) ~ log(Abundance), firm.df2))
+
+```
+
+
+Plot family level relative abundance
+```{r prevalence plot}
+# Prevalence - how many samples the taxa is observed in
+prevdf = apply(X = otu_table(PSOpeak),
+               MARGIN = ifelse(taxa_are_rows(PSOpeak), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+prevdf = data.frame(Prevalence = prevdf,
+                    TotalAbundance = taxa_sums(PSOpeak), # the total number of occurrences (even if only observed 50 times in 1 sample, the number would be 50)
+                    tax_table(PSOpeak))
+print("Table showing prevalence, total abundance, and taxonomy:")
+prevdf[1:10,]
+
+
+# Family
+# Agglomerate taxa
+PSOpeak_F = tax_glom(PSOpeak, "Family", NArm = TRUE)
+PSOpeak_F <- microbiome::aggregate_top_taxa(PSOpeak_F, "Family", top = 10)
+ps1F.10.family.comp <- microbiome::transform(PSOpeak_F, transform="compositional") #compositional
+
+# Plot
+plot.composition.relAbun <- microbiome::plot_composition(ps1F.10.family.comp,
+                                             sample.sort = "Description",
+                                             #x.label = "peakTMAO",
+                                             group_by = "peakTMAO",
+                                             average_by = "peakTMAO") +
+  theme_bw() +
+  upstartr::scale_y_percent() + 
+  scale_fill_brewer("Family", palette = "Paired") + 
+  scale_x_discrete(breaks=c("peak0", "peak30", "peak180", "peak360"),
+        labels=c("Peak 0m", "Peak 30m", "Peak 3hr", "Peak 6hr")) + 
+  labs(x= "Peak TMAO Group", y = "Relative Abundance (%)")
+
+plot.composition.relAbun
+# Save
+tiff("../../plots/RelAbund_Fam_peakTMAO_221031.tiff", width = 5, height = 4, units = 'in', res = 300)
+plot.composition.relAbun
+dev.off()
+```
+
+
+
