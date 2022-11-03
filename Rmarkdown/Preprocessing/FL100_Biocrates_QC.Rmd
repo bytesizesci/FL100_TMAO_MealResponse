@@ -1,0 +1,162 @@
+---
+title: "Preprocess Biocrates Data"
+author: "Kristen James"
+date: "2/10/2022"
+html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    number_sections: true
+    keep_md: true
+---
+
+# Overview 
+
+Project: FL100
+
+Date: 2/10/2022
+
+Purpose: Preliminary metabolomics data generated using Biocrates plates was shared by the Newman lab. The biocrates data file needs to be manipulated/cleaned so that it is ready to be analyzed in R.
+
+Note, these are the metabolites quantified via biocrates, https://biocrates.com/wp-content/uploads/2021/01/biocrates-Quant500-list-of-metabolites-v4-2021.pdf 
+
+```{r libraries, results='hide', message=FALSE}
+library(dplyr)
+```
+
+# Load 
+
+```{r load biocrates data, results='hide'}
+# Load data from Jon Newman on 8/5/21
+bio <- read.csv("../../Data/Raw/from_JohnNewman/Prelim_Biocretes_dataset_v3_corrected_PPTime.csv", na.strings=c(""," ","NA"))
+
+head(bio)
+```
+
+# Clean 
+
+This file is ugly. It needs to be tailored before we can confidently maneuver in it. 
+
+```{r Beautify biocrates file, results='hide'}
+# Set column names
+colnames(bio) <- bio[3,]
+
+# Note, can't set row names to subject ID yet bc this data-set has multiple blood draws/person so IDs aren't unique. 
+# Will subset to BD1 in our first pass. See chunk below.
+
+# Trim junk rows on top and NA rows on bottom
+dim(bio) #683 591
+bio <- bio[4:677,] #674 591
+
+# Use gsub to get rid of spaces in column names - YUCK!
+colnames(bio)[1:35]
+colnames(bio) <- gsub(" ", "_", colnames(bio))
+
+# Get rid of blank columns
+emptycols <- sapply(bio, function (k) all(is.na(k)))
+table(emptycols) # no empty cols now
+bio2 <- bio[!emptycols]
+dim(bio2) #674 591
+
+# Look at structure
+str(bio2) # Imported as chr. Not what we want. Check that out.
+colnames(bio2)[1:35]
+# First, subset to the columns we want to turn into numeric values
+bio3 <- bio2[,c(9:length(bio2))]
+# Then, lapply the combined character->numeric function to turn them into numbers
+bio4 <- lapply(bio3, function(x) as.numeric(as.character(x)))
+str(bio4)[1:35]
+# Finally, turn your list into a data frame using cbind
+bio5 <- do.call(cbind.data.frame, bio4)
+
+# Combine with columns 1-8
+bio6 <- cbind(bio2[,1:8], bio5)
+
+# Last touches
+bio6$Blood_Draw <- as.factor(bio6$Blood_Draw)
+bio6$PlateNumber <- as.factor(bio6$PlateNumber)
+bio6$Subject_ID <- as.factor(bio6$Subject_ID)
+bio6$pp_Time_min <- as.factor(bio6$pp_Time_min)
+bio6$import_order <- as.numeric(bio6$import_order)
+```
+
+Save long data
+```{r Save long biocrates data}
+write.csv(bio6, "../../Data/Processed/Biocrates_long.csv")
+saveRDS(bio6, "../../Data/Processed/Biocrates_long.rds")
+```
+
+# Combine with Metadata 
+
+Combine with metadata such as sex, age, BMI, etc. 
+
+```{r load TMAO, results='hide'}
+# load TMAO
+tmao <- read.csv("../../Data/Raw/TMAO/CTSC24532USDAWHNRCNu-TMAOKJ012220_DATA_2020-07-15_0915_NAedited.csv")
+
+# Check it out and simplify
+colnames(tmao)
+tmao <- subset(tmao, select=c(subject_id, age, sex, bmi_final, bin_number, endo_ln_rhi, endo_al, cystatinc_bd1, tmao, betaine, choline, carnitine, phosphocholine, creatinine, tnfa_bd1))
+
+# Make logTMAO column
+tmao$lnTMAO_WangMethod <- log(tmao$tmao)
+
+# For merging, check str of subject id
+str(tmao$subject_id)
+tmao$subject_id <- as.factor(tmao$subject_id)
+
+```
+
+Left add
+```{r left_join biocrates and meta data}
+bio6_tmao <- left_join(bio6, tmao, by = c("Subject_ID"="subject_id"))
+```
+
+Save long data with meta
+```{r Save long biocrates data}
+write.csv(bio6_tmao, "../../Data/Processed/Biocrates_long_meta.csv")
+saveRDS(bio6_tmao, "../../Data/Processed/Biocrates_long_meta.rds")
+```
+
+# Subset by Blood Draw
+
+Subset to each blood draw samples and set row names.
+```{r Subset by blood draw, results='hide'}
+# Subset to BD
+table(bio6_tmao$pp_Time_min)
+str(bio6_tmao$pp_Time_min)
+
+# Make dfs by BD
+bio_bd1 <- bio6_tmao[bio6_tmao$pp_Time_min == 0,]
+bio_bd2 <- bio6_tmao[bio6_tmao$pp_Time_min == 30,]
+bio_bd3 <- bio6_tmao[bio6_tmao$pp_Time_min == 180,]
+bio_bd4 <- bio6_tmao[bio6_tmao$pp_Time_min == 360,]
+
+# Set row names
+# Now set row names to subject ID
+rownames(bio_bd1) <- bio_bd1[,"Subject_ID"]
+rownames(bio_bd2) <- bio_bd2[,"Subject_ID"]
+rownames(bio_bd3) <- bio_bd3[,"Subject_ID"]
+rownames(bio_bd4) <- bio_bd4[,"Subject_ID"]
+```
+
+Save time course data for future use
+```{r Save Biocrates data}
+# BD1
+write.csv(bio_bd1, "../../Data/Processed/Biocrates_BD1_meta.csv")
+saveRDS(bio_bd1, "../../Data/Processed/Biocrates_BD1_meta.rds")
+
+# BD2
+write.csv(bio_bd2, "../../Data/Processed/Biocrates_BD2_meta.csv")
+saveRDS(bio_bd2, "../../Data/Processed/Biocrates_BD2_meta.rds")
+
+# BD3
+write.csv(bio_bd3, "../../Data/Processed/Biocrates_BD3_meta.csv")
+saveRDS(bio_bd3, "../../Data/Processed/Biocrates_BD3_meta.rds")
+
+# BD4
+write.csv(bio_bd4, "../../Data/Processed/Biocrates_BD4_meta.csv")
+saveRDS(bio_bd4, "../../Data/Processed/Biocrates_BD4_meta.rds")
+
+```
+

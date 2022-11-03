@@ -1,0 +1,124 @@
+---
+title: "Area Under the Curve"
+author: "Kristen James"
+date: "2/10/2022"
+html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    number_sections: true
+    keep_md: true
+---
+# Overview 
+
+Project: FL100
+
+Date: 2/10/2022
+
+Purpose: Calculate the area under the curve for TMAO response to the meal challenge in FL100. We will use the trapezoid rule.
+
+```{r Load data}
+# all data
+dat <- readRDS("../../Data/Processed/Biocrates_long_meta.rds")
+
+# Simplify to TMAO data to work out the area under the curve code
+dat <- subset(dat, select = c(Subject_ID, pp_Time_min, TMAO))
+table(dat$pp_Time_min)
+
+# Make data wide
+dat_wide <- reshape(dat, idvar = "Subject_ID", v.names = "TMAO", timevar = "pp_Time_min", direction = "wide")
+
+# We can see that the BDs have missing data for different participants.
+bd_30 <- dat_wide[complete.cases(dat_wide$TMAO.30) == TRUE,] # 99 individuals
+bd_180 <- dat_wide[complete.cases(dat_wide$TMAO.180) == TRUE,] # 103
+bd_360 <- dat_wide[complete.cases(dat_wide$TMAO.360) == TRUE,] # 102 
+
+# We only want to keep participants with all 4 blood draws so we can do a general na.omit() command.
+dat_wide_sub <- na.omit(dat_wide) # 97 have all data
+
+# Rename so it will be easier to type
+tr <- dat_wide_sub
+```
+
+Trapezoid rule:
+A = ((a + b)/2)h
+
+a = TMAO at time X1
+b = TMAT at time X2
+h = time X2 - time X1
+
+```{r Area under the curve}
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(tr$TMAO.0)
+summary(tr$TMAO.30)
+summary(tr$TMAO.180)
+summary(tr$TMAO.360)
+
+# BD 0-30 min
+tr$area_0_30 <- (((tr$TMAO.0 + tr$TMAO.30)/2) * 30)
+
+# BD 30-180 min (150 min)
+tr$area_30_180 <- (((tr$TMAO.30 + tr$TMAO.180)/2) * 150)
+
+# BD 180-360 min (180 min)
+tr$area_180_360 <- (((tr$TMAO.180 + tr$TMAO.360)/2) * 180)
+
+# Total area
+tr$AUC_TMAO_uM_min <- tr$area_0_30 + tr$area_30_180 + tr$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(tr$AUC_TMAO_uM_min)
+
+# Make a uM-hour variable
+tr$AUC_TMAO_uM_hour <- (tr$AUC_TMAO_uM_min/60) 
+
+# Check out the distribution
+shapiro.test(tr$AUC_TMAO_uM_hour)
+shapiro.test(log(tr$AUC_TMAO_uM_hour))
+shapiro.test((tr$AUC_TMAO_uM_hour)^-.5) # best transformation
+
+# Transform
+tr$AUC_TMAO_uM_hour_NegSqrRt <- tr$AUC_TMAO_uM_hour ^ -.5
+tr$AUC_TMAO_uM_min_NegSqrRt <- tr$AUC_TMAO_uM_min ^ -.5
+```
+
+
+```{r Save area under the curve}
+# Save
+write.csv(tr, "../../Data/Processed/Biocrates_AreaUnderCurve.csv")
+saveRDS(tr, "../../Data/Processed/Biocrates_AreaUnderCurve.rds")
+```
+
+# Combine with Metadata 
+
+Combine with metadata such as sex, age, BMI, etc. 
+
+```{r load TMAO, results='hide'}
+# load TMAO
+tmao <- read.csv("../../Data/Raw/TMAO/CTSC24532USDAWHNRCNu-TMAOKJ012220_DATA_2020-07-15_0915_NAedited.csv")
+
+# Check it out and simplify
+colnames(tmao)
+tmao <- subset(tmao, select=c(subject_id, age, sex, bmi_final, bin_number, endo_ln_rhi, endo_al, cystatinc_bd1, tmao, betaine, choline, carnitine, phosphocholine, creatinine, tnfa_bd1))
+
+# Make logTMAO column
+tmao$lnTMAO_WangMethod <- log(tmao$tmao)
+
+# For merging, check str of subject id
+str(tmao$subject_id)
+tmao$subject_id <- as.factor(tmao$subject_id)
+
+```
+
+Left add
+```{r left_join biocrates and meta data}
+tr_tmao <- left_join(tr, tmao, by = c("Subject_ID"="subject_id"))
+```
+
+Save long data with meta
+```{r Save long biocrates data}
+write.csv(tr_tmao, "../../Data/Processed/Biocrates_AreaUnderCurve_meta.csv")
+saveRDS(tr_tmao, "../../Data/Processed/Biocrates_AreaUnderCurve_meta.rds")
+```
+
+

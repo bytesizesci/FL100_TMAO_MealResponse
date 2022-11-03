@@ -1,0 +1,196 @@
+---
+title: "AUC All Bioc Metabolites"
+author: "Kristen James"
+date: '2022-07-21'
+output: html_document
+---
+
+Create a loop that will calculate the AUC for all metabolites
+
+Remove indole, it has many (>20) missing values
+
+```{r}
+# all data
+dat <- readRDS("../../Data/Processed/Biocrates_long_meta.rds")
+colnames(dat)
+remove <- c("age", "sex", "bmi_final", "bin_number", "endo_ln_rhi", "endo_al", "cystatinc_bd1", "tmao", "betaine", "choline", "carnitine", "phosphocholine", "creatinine", "tnfa_bd1", "lnTMAO_WangMethod", "import_order", "Sample_Completeness", "Column_1", "Plate_Grp", "Blood_Draw", "PlateNumber")
+dat <- dat[ , -which(names(dat) %in% remove)]
+
+# Subset by BD
+dat1 <- dat[dat$pp_Time_min == "0",]
+dat2 <- dat[dat$pp_Time_min == "30",]
+dat3 <- dat[dat$pp_Time_min == "180",]
+dat4 <- dat[dat$pp_Time_min == "360",]
+
+# Assign row names
+rownames(dat1) <- dat1$Subject_ID
+dat1 <- subset(dat1, select = -c(Subject_ID, pp_Time_min))
+rownames(dat2) <- dat2$Subject_ID
+dat2 <- subset(dat2, select = -c(Subject_ID, pp_Time_min))
+rownames(dat3) <- dat3$Subject_ID
+dat3 <- subset(dat3, select = -c(Subject_ID, pp_Time_min))
+rownames(dat4) <- dat4$Subject_ID
+dat4 <- subset(dat4, select = -c(Subject_ID, pp_Time_min))
+
+# How many missing values do we have?
+miss_dat1 <- apply(dat1, MARGIN = 2, function(x) sum(is.na(x)))
+miss_dat2 <- apply(dat2, MARGIN = 2, function(x) sum(is.na(x)))
+miss_dat3 <- apply(dat3, MARGIN = 2, function(x) sum(is.na(x)))
+miss_dat4 <- apply(dat4, MARGIN = 2, function(x) sum(is.na(x)))
+table(miss_dat1)
+table(miss_dat2)
+table(miss_dat3)
+table(miss_dat4)
+
+# Of PCs, LPCs, BAs and uremic toxins, how frequent is missing data?
+# positions: 
+# BAs: 80-93
+# LPCs and PCs: 205-292
+# UT: 72, 155, 328
+names(miss_dat1)
+miss_dat1_focused <- miss_dat1[c(80:93, 205:292, 72, 155, 328)]
+miss_dat2_focused <- miss_dat2[c(80:93, 205:292, 72, 155, 328)]
+miss_dat3_focused <- miss_dat3[c(80:93, 205:292, 72, 155, 328)]
+miss_dat4_focused <- miss_dat4[c(80:93, 205:292, 72, 155, 328)]
+# Table 
+table(miss_dat1_focused) # PC_ae_C38:1 missing 67
+table(miss_dat2_focused) # PC_ae_C38:1 missing 18, PC_ae_C38:1 missing 15
+table(miss_dat3_focused) # PC_ae_C38:1 missing 18, PC_ae_C38:1 missing 15
+table(miss_dat4_focused) # PC_ae_C38:1 missing 17
+# All data
+dat_TMAOcomplete <- rownames(dat2)
+# Remove "6082" "7064" "8006" "8081" "8108" "9011" "9012" due to missing 1 TMAO value
+rem <- c("6082", "7064", "8006", "8081", "8108", "9011", "9012")
+dat_sub <- dat[dat$Subject_ID %in% rem == FALSE,]
+miss_dat_long <- apply(dat_sub, MARGIN = 2, function(x) sum(is.na(x)))
+miss_dat_long_focused <- miss_dat_long[c(80:93, 205:292, 72, 155, 328)]
+table(miss_dat_long_focused)
+36/nrow(dat_sub) * 100 # PC_aa_C38:1
+112/nrow(dat_sub) * 100 # PC_ae_C38:1
+
+# Subset dat1 to participants in other time course data
+dat1 <- dat1[rownames(dat1) %in% rownames(dat2), ]
+
+# If the metabolite is missing more than 10 values we should remove it
+# bd1
+dat1t <- as.data.frame(t(dat1))
+dat1t$sample_missing <- rowSums(is.na(dat1t))
+table(dat1t$sample_missing)
+missOver10_b1 <- rownames(dat1t)[dat1t$sample_missing >= 10]
+missOver10_b1
+
+# bd2
+dat2t <- as.data.frame(t(dat2))
+dat2t$sample_missing <- rowSums(is.na(dat2t))
+table(dat2t$sample_missing)
+missOver10_b2 <- rownames(dat2t)[dat2t$sample_missing >= 10]
+missOver10_b2
+
+# bd3
+dat3t <- as.data.frame(t(dat3))
+dat3t$sample_missing <- rowSums(is.na(dat3t))
+table(dat3t$sample_missing)
+missOver10_b3 <- rownames(dat3t)[dat3t$sample_missing >= 10]
+missOver10_b3
+
+# bd4
+dat4t <- as.data.frame(t(dat4))
+dat4t$sample_missing <- rowSums(is.na(dat4t))
+table(dat4t$sample_missing)
+missOver10_b4 <- rownames(dat4t)[dat4t$sample_missing >= 10]
+missOver10_b4
+
+# Combine missing list 
+missing_remove <- c(missOver10_b1, missOver10_b2, missOver10_b3, missOver10_b4)
+missing_remove <- unique(missing_remove)
+missing_remove
+
+# Remove 
+dat1 <- dat1[ , -which(names(dat1) %in% missing_remove)]
+dat2 <- dat2[ , -which(names(dat2) %in% missing_remove)]
+dat3 <- dat3[ , -which(names(dat3) %in% missing_remove)]
+dat4 <- dat4[ , -which(names(dat4) %in% missing_remove)]
+
+# check dim
+dim(dat1)
+dim(dat2)
+dim(dat3)
+dim(dat4)
+
+# Now, when there are missing values, replace the NA with median
+# BD1
+for(i in 2:ncol(dat1)){
+  dat1[,i][is.na(dat1[,i])] <- median(dat1[,i], na.rm = TRUE)
+}
+# BD2
+for(i in 2:ncol(dat2)){
+  dat2[,i][is.na(dat2[,i])] <- median(dat2[,i], na.rm = TRUE)
+}
+# BD3
+for(i in 2:ncol(dat3)){
+  dat3[,i][is.na(dat3[,i])] <- median(dat3[,i], na.rm = TRUE)
+}
+# BD4
+for(i in 2:ncol(dat4)){
+  dat4[,i][is.na(dat4[,i])] <- median(dat4[,i], na.rm = TRUE)
+}
+
+# Check that colnames and rownames are the same accross all data frames
+#colnames
+identical(colnames(dat1), colnames(dat2))
+identical(colnames(dat1), colnames(dat3))
+identical(colnames(dat1), colnames(dat4))
+identical(colnames(dat2), colnames(dat3))
+identical(colnames(dat2), colnames(dat4))
+identical(colnames(dat3), colnames(dat4))
+#rownames
+identical(rownames(dat1), rownames(dat2))
+identical(rownames(dat1), rownames(dat3))
+identical(rownames(dat1), rownames(dat4))
+identical(rownames(dat2), rownames(dat3))
+identical(rownames(dat2), rownames(dat4))
+identical(rownames(dat3), rownames(dat4))
+```
+
+Now loop to create AUC variables...
+Pick out metabolite, do calculation across dataframes, store results
+```{r Calculate AUC}
+res <- list()
+for(i in 1:ncol(dat1)){
+  # get metabolite 1
+  metab_slice_bd1 <- dat1[,i]
+  metab_slice_bd2 <- dat2[,i]
+  metab_slice_bd3 <- dat3[,i]
+  metab_slice_bd4 <- dat4[,i]
+  # do calculation
+  # BD 0-30 min
+  a1 <- (((metab_slice_bd1 + metab_slice_bd2)/2) * 30)
+  # BD 30-180 min (150 min)
+  a2 <- (((metab_slice_bd2 + metab_slice_bd3)/2) * 150)
+  # BD 180-360 min (180 min)
+  a3 <- (((metab_slice_bd3 + metab_slice_bd4)/2) * 180)
+  # Total area
+  total <- a1 + a2 + a3
+  # Store result
+  res[[i]] <- total
+}
+
+AUC_bioc_df <- do.call(cbind, res)
+AUC_bioc_df <- as.data.frame(AUC_bioc_df)
+
+colnames(AUC_bioc_df) <- colnames(dat1)
+rownames(AUC_bioc_df) <- rownames(dat1)
+
+```
+
+Save
+```{r}
+write.csv(AUC_bioc_df, "../../Data/Processed/Biocrates_AreaUnderCurve_AllMetabolites.csv")
+saveRDS(AUC_bioc_df, "../../Data/Processed/Biocrates_AreaUnderCurve_AllMetabolites.rds")
+```
+
+Curiosity!
+```{r}
+summary(lm(AUC_bioc_df$TMAO ~ AUC_bioc_df$`p-Cresol-SO4`))
+```
+

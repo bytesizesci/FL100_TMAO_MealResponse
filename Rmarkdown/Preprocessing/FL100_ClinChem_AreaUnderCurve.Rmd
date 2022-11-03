@@ -1,0 +1,788 @@
+---
+title: "AUC_clinChem"
+author: "Kristen James"
+date: "6/1/2022"
+output: html_document
+---
+
+6/1/22
+
+Prep the BD1-4 clinical chemistry data. Calculate AUC for each blood marker. 
+
+Trapezoid rule:
+A = ((a + b)/2)h
+
+a = TMAO at time X1
+b = TMAT at time X2
+h = time X2 - time X1
+
+9/12/22
+
+Update - add HDL, LDL, total cholesterol, TNF-a, IL6, CRP to analysis
+
+
+```{r libraries, results='hide', message=FALSE}
+library(dplyr)
+```
+
+# Load 
+
+```{r load biocrates data, results='hide'}
+# Load data from REDCap
+getwd()
+clin <- read.csv("../../Data/Raw/REDCap/CTSC24532USDAWHNRCNu-GlucoseInsulinTrigly_DATA_2022-06-01_1224.csv", na.strings=c(""," ","NA"), row.names = 1)
+
+head(clin)
+```
+
+# Glucose
+
+```{r AUC - Glucose}
+# Specify correct blood marker
+phen_vars <- c("glc_bd1", "glc_bd2", "glc_bd3", "glc_bd4")
+pheno <- "glucose"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- clin[,colnames(clin) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd2_30m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd2_30m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-30 min
+phen_df$area_0_30 <- (((phen_df$bd1_0m + phen_df$bd2_30m)/2) * 30)
+
+# BD 30-180 min (150 min)
+phen_df$area_30_180 <- (((phen_df$bd2_30m + phen_df$bd3_180m)/2) * 150)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_30 + phen_df$area_30_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr)
+shapiro.test(log(phen_df$AUC_pheno_hr))
+shapiro.test((phen_df$AUC_pheno_hr)^.5)
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # best transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$glucose_AUC_pheno_hr)
+
+# Save
+glucose_df_noNA <- phen_df_noNA
+```
+
+# Insulin
+
+```{r AUC - Insulin}
+# Specify correct blood marker
+phen_vars <- c("insulin_bd1", "insulin_bd2", "insulin_bd3", "insulin_bd4")
+pheno <- "insulin"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- clin[,colnames(clin) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd2_30m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd2_30m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-30 min
+phen_df$area_0_30 <- (((phen_df$bd1_0m + phen_df$bd2_30m)/2) * 30)
+
+# BD 30-180 min (150 min)
+phen_df$area_30_180 <- (((phen_df$bd2_30m + phen_df$bd3_180m)/2) * 150)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_30 + phen_df$area_30_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr)
+shapiro.test(log(phen_df$AUC_pheno_hr)) # best transformation
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # works transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+phen_df$AUC_pheno_hr_ln <- log(phen_df$AUC_pheno_hr)
+phen_df$AUC_pheno_min_ln <- log(phen_df$AUC_pheno_min)
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+colnames(phen_df)
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$insulin_AUC_pheno_hr)
+
+# Save
+insulin_df_noNA <- phen_df_noNA
+```
+
+# TG
+
+```{r AUC - TG}
+# Specify correct blood marker
+phen_vars <- c("tg_bd1", "tg_bd2", "tg_bd3", "tg_bd4")
+pheno <- "triglycerides"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- clin[,colnames(clin) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd2_30m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd2_30m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-30 min
+phen_df$area_0_30 <- (((phen_df$bd1_0m + phen_df$bd2_30m)/2) * 30)
+
+# BD 30-180 min (150 min)
+phen_df$area_30_180 <- (((phen_df$bd2_30m + phen_df$bd3_180m)/2) * 150)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_30 + phen_df$area_30_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr)
+shapiro.test(log(phen_df$AUC_pheno_hr)) # best transformation
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # works transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+phen_df$AUC_pheno_hr_ln <- log(phen_df$AUC_pheno_hr)
+phen_df$AUC_pheno_min_ln <- log(phen_df$AUC_pheno_min)
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+colnames(phen_df)
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$triglycerides_AUC_pheno_hr)
+
+# Save
+triglycerides_df_noNA <- phen_df_noNA
+```
+
+9/12/22 Add other phenotypes
+
+Load other data
+
+```{r Load lipid data}
+lipid <- read.csv("../../Data/Raw/REDCap/CTSC24532USDAWHNRCNu-LipidData_DATA_2022-06-01_1213.csv", row.names = 1)
+colnames(lipid)
+```
+
+
+# HDL
+
+```{r AUC - HDL}
+# Specify correct blood marker
+phen_vars <- c("hdl_bd1", "hdl_bd2", "hdl_bd3", "hdl_bd4")
+pheno <- "HDL"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- lipid[,colnames(lipid) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd2_30m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd2_30m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-30 min
+phen_df$area_0_30 <- (((phen_df$bd1_0m + phen_df$bd2_30m)/2) * 30)
+
+# BD 30-180 min (150 min)
+phen_df$area_30_180 <- (((phen_df$bd2_30m + phen_df$bd3_180m)/2) * 150)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_30 + phen_df$area_30_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr)
+shapiro.test(log(phen_df$AUC_pheno_hr)) # best transformation
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # works transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+phen_df$AUC_pheno_hr_ln <- log(phen_df$AUC_pheno_hr)
+phen_df$AUC_pheno_min_ln <- log(phen_df$AUC_pheno_min)
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+colnames(phen_df)
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$HDL_AUC_pheno_hr)
+
+# Save
+HDL_df_noNA <- phen_df_noNA
+```
+
+# LDL
+
+```{r AUC - LDL}
+# Specify correct blood marker
+phen_vars <- c("ldl_bd1", "ldl_bd2", "ldl_bd3", "ldl_bd4")
+pheno <- "LDL"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- lipid[,colnames(lipid) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd2_30m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd2_30m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-30 min
+phen_df$area_0_30 <- (((phen_df$bd1_0m + phen_df$bd2_30m)/2) * 30)
+
+# BD 30-180 min (150 min)
+phen_df$area_30_180 <- (((phen_df$bd2_30m + phen_df$bd3_180m)/2) * 150)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_30 + phen_df$area_30_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr) # fine
+shapiro.test(log(phen_df$AUC_pheno_hr)) # best transformation
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # works transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+phen_df$AUC_pheno_hr_ln <- log(phen_df$AUC_pheno_hr)
+phen_df$AUC_pheno_min_ln <- log(phen_df$AUC_pheno_min)
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+colnames(phen_df)
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$LDL_AUC_pheno_hr)
+
+# Save
+LDL_df_noNA <- phen_df_noNA
+```
+
+# Total Cholesterol
+
+```{r AUC - Total Cholesterol}
+# Specify correct blood marker
+phen_vars <- c("chol_bd1", "chol_bd2", "chol_bd3", "chol_bd4")
+pheno <- "chol"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- lipid[,colnames(lipid) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd2_30m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd2_30m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-30 min
+phen_df$area_0_30 <- (((phen_df$bd1_0m + phen_df$bd2_30m)/2) * 30)
+
+# BD 30-180 min (150 min)
+phen_df$area_30_180 <- (((phen_df$bd2_30m + phen_df$bd3_180m)/2) * 150)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_30 + phen_df$area_30_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr) # fine
+shapiro.test(log(phen_df$AUC_pheno_hr)) # best transformation
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # works transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+phen_df$AUC_pheno_hr_ln <- log(phen_df$AUC_pheno_hr)
+phen_df$AUC_pheno_min_ln <- log(phen_df$AUC_pheno_min)
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+colnames(phen_df)
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$chol_AUC_pheno_hr)
+
+# Save
+chol_df_noNA <- phen_df_noNA
+```
+
+# Load inflammatory data
+
+No BD2 for these variables.
+
+```{r Load inflammatory data}
+infl <- read.csv("../../Data/Raw/REDCap/CTSC24532USDAWHNRCNu-CytokinesChemokines_DATA_2022-09-12_1028.csv", row.names = 1)
+colnames(infl)
+```
+
+# TNFa 
+
+No BD2 for these variables.
+
+```{r AUC - tnfa}
+# Specify correct blood marker
+phen_vars <- c("tnfa_bd1", "tnfa_bd3", "tnfa_bd4")
+pheno <- "tnfa"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- infl[,colnames(infl) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-180 min
+phen_df$area_0_180 <- (((phen_df$bd1_0m + phen_df$bd3_180m)/2) * 180)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr) 
+shapiro.test(log(phen_df$AUC_pheno_hr)) # best transformation
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # works transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+phen_df$AUC_pheno_hr_ln <- log(phen_df$AUC_pheno_hr)
+phen_df$AUC_pheno_min_ln <- log(phen_df$AUC_pheno_min)
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+colnames(phen_df)
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$tnfa_AUC_pheno_hr)
+
+# Save
+tnfa_df_noNA <- phen_df_noNA
+```
+
+# IL6
+
+No BD2 for these variables.
+
+```{r AUC - IL6}
+# Specify correct blood marker
+phen_vars <- c("il6_bd1", "il6_bd3", "il6_bd4")
+pheno <- "il6"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- infl[,colnames(infl) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-180 min
+phen_df$area_0_180 <- (((phen_df$bd1_0m + phen_df$bd3_180m)/2) * 180)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr) 
+shapiro.test(log(phen_df$AUC_pheno_hr)) # works transformation
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # best transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+phen_df$AUC_pheno_hr_ln <- log(phen_df$AUC_pheno_hr)
+phen_df$AUC_pheno_min_ln <- log(phen_df$AUC_pheno_min)
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+colnames(phen_df)
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$il6_AUC_pheno_hr)
+
+# Save
+il6_df_noNA <- phen_df_noNA
+```
+
+# CRP
+
+No BD2 for these variables.
+
+```{r AUC - CRP}
+# Specify correct blood marker
+phen_vars <- c("crp_bd1", "crp_bd3", "crp_bd4")
+pheno <- "crp"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Run Chunk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Can chunk this and run
+# Subset
+phen_df <- infl[,colnames(infl) %in% phen_vars]
+# Rename columns to make code recyclable 
+colnames(phen_df) <- c("bd1_0m", "bd3_180m", "bd4_360m")
+
+# Make sure there are no values below 0. Not only would that not make physiological sense but we'd need to subtract the area. 
+summary(phen_df$bd1_0m)
+summary(phen_df$bd3_180m)
+summary(phen_df$bd4_360m)
+
+# BD 0-180 min
+phen_df$area_0_180 <- (((phen_df$bd1_0m + phen_df$bd3_180m)/2) * 180)
+
+# BD 180-360 min (180 min)
+phen_df$area_180_360 <- (((phen_df$bd3_180m + phen_df$bd4_360m)/2) * 180)
+
+# Total area
+phen_df$AUC_pheno_min <- phen_df$area_0_180 + phen_df$area_180_360
+
+# Check it out. The unit is uM-min.
+summary(phen_df$AUC_pheno_min)
+
+# Make a uM-hour variable
+phen_df$AUC_pheno_hr <- (phen_df$AUC_pheno_min/60) 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Manually
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Manually,
+# Check out the distribution
+shapiro.test(phen_df$AUC_pheno_hr) 
+shapiro.test(log(phen_df$AUC_pheno_hr)) # works transformation
+shapiro.test((phen_df$AUC_pheno_hr)^-.5) # best transformation
+
+# Transform
+phen_df$AUC_pheno_hr_NegSqrRt <- phen_df$AUC_pheno_hr ^ -.5
+phen_df$AUC_pheno_min_NegSqrRt <- phen_df$AUC_pheno_min ^ -.5
+phen_df$AUC_pheno_hr_ln <- log(phen_df$AUC_pheno_hr)
+phen_df$AUC_pheno_min_ln <- log(phen_df$AUC_pheno_min)
+
+# Rename columns to fit variable
+colnames(phen_df)
+colnames(phen_df) <- paste0(pheno, "_", colnames(phen_df))
+colnames(phen_df)
+
+# Complete cases
+phen_df_noNA <- na.omit(phen_df)
+
+# Plot
+plot(phen_df_noNA$crp_AUC_pheno_hr)
+
+# Save
+crp_df_noNA <- phen_df_noNA
+```
+
+# Merge data frames
+
+```{r}
+df <- merge(triglycerides_df_noNA, glucose_df_noNA, by = 0)
+rownames(df) <- df[,1]
+df <- df[,-1]
+
+df <- merge(df, insulin_df_noNA, by = 0)
+rownames(df) <- df[,1]
+df <- df[,-1]
+
+df <- merge(df, HDL_df_noNA, by = 0)
+rownames(df) <- df[,1]
+df <- df[,-1]
+
+df <- merge(df, LDL_df_noNA, by = 0)
+rownames(df) <- df[,1]
+df <- df[,-1]
+
+df <- merge(df, chol_df_noNA, by = 0)
+rownames(df) <- df[,1]
+df <- df[,-1]
+
+df <- merge(df, tnfa_df_noNA, by = 0)
+rownames(df) <- df[,1]
+df <- df[,-1]
+
+df <- merge(df, il6_df_noNA, by = 0)
+rownames(df) <- df[,1]
+df <- df[,-1]
+
+df <- merge(df, crp_df_noNA, by = 0)
+rownames(df) <- df[,1]
+df <- df[,-1]
+```
+
+Save
+
+```{r Save}
+# 6/11/2022
+#write.csv(df, "../../Data/Processed/Clinical_AreaUnderCurve.csv")
+#saveRDS(df, "../../Data/Processed/Clinical_AreaUnderCurve.rds")
+
+# 9/12/2022
+write.csv(df, "../../Data/Processed/Clinical_Inflammation_AreaUnderCurve.csv")
+saveRDS(df, "../../Data/Processed/Clinical_Inflammation_AreaUnderCurve.rds")
+```
+
+Combine with TMAO data for quick correlations/t-tests
+
+```{r}
+tmao <- readRDS("../../Data/Processed/Biocrates_AreaUnderCurve_meta.rds")
+rownames(tmao) <- tmao[,1]
+tmao <- tmao[,-1]
+
+dftmao <- merge(df, tmao, by=0, all.x=F, all.y = T)
+rownames(dftmao) <- dftmao[,1]
+dftmao <- dftmao[,-1]
+```
+
+Stats
+
+```{r}
+# AUC Totals
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ insulin_AUC_pheno_hr_NegSqrRt + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ triglycerides_AUC_pheno_hr_NegSqrRt + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ glucose_AUC_pheno_hr + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ HDL_AUC_pheno_hr_NegSqrRt + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ LDL_AUC_pheno_hr + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ chol_AUC_pheno_hr + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ tnfa_AUC_pheno_hr_ln + sex*age, dftmao)) # yes
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ il6_AUC_pheno_hr_NegSqrRt + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ crp_AUC_pheno_hr_NegSqrRt + sex*age, dftmao)) 
+
+# 0
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ insulin_bd1_0m + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ triglycerides_bd1_0m + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ glucose_bd1_0m + sex*age, dftmao))
+
+# 30
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ insulin_bd2_30m + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ triglycerides_bd2_30m + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ glucose_bd2_30m + sex*age, dftmao))
+
+# 180
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ insulin_bd3_180m + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ triglycerides_bd3_180m + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ glucose_bd3_180m + sex*age, dftmao))
+
+# 360
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ insulin_bd4_360m + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ triglycerides_bd4_360m + sex*age, dftmao))
+summary(lm(AUC_TMAO_uM_hour_NegSqrRt ~ glucose_bd4_360m + sex*age, dftmao))
+
+
+#library(Hmisc)
+#rcorr(x, type="pearson")
+```
+
+Maybe something related to TG
+
