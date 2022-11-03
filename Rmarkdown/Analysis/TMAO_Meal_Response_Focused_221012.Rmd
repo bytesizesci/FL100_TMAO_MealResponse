@@ -1,0 +1,2180 @@
+---
+title: "Meal Response"
+author: "Kristen James"
+date: "3/2/2022"
+output: html_document
+---
+
+**About:** 
+
+Finalize the FL100-Biocrates Analysis - Focus on tables and descriptive statistics
+
+**Project Objective:** 
+
+We previously identified that TMAO concentrations change after the MMTT. This leads us to ask, why does this happen and is it important for health? To address *why* this happens, we will associate AUC-TMAO with the microbiome, FMO3 genotype, and the plasma metabolome. The bulk of those 3 analyses are completed in other markdowns. To address *does it matter*, we relate AUC-TMAO to CVD biomarkers.That analysis is completed here. Also in this markdown are general descriptive details about the participants and their blood markers. 
+
+**House Keeping Notes:**
+
+- Use the "hour" AUC variables when you can
+- When wanting to talk about a relationship, use the log transformed AUC variables
+
+# Lets get started!
+
+## Load libraries
+```{r Libraries}
+library(hrbrthemes)
+library(ggplot2)
+library(ggpubr)
+library(ggbreak) # Cite: S Xu#, M Chen#, T Feng, L Zhan, L Zhou, G Yu*. Use ggbreak to effectively utilize plotting space to deal with large datasets and outliers. Frontiers in Genetics. 2021, 12:774846. doi: 10.3389/fgene.2021.774846
+library(patchwork)
+library(tableone)
+library(corrr)
+library("Hmisc")
+
+# Clear environment to start fresh (if necessary)
+rm(list = ls())
+```
+
+## Load functions
+```{r Custom functions}
+# ++++++++++++++++++++++++++++
+# flattenCorrMatrix
+# ++++++++++++++++++++++++++++
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+# Ex: 
+#res2<-rcorr(as.matrix(mtcars[,1:7]))
+#flattenCorrMatrix(res2$r, res2$P)
+```
+
+```{r mean SD for group}
+#+++++++++++++++++++++++++
+# Function to calculate the mean and the standard deviation
+  # for each group
+#+++++++++++++++++++++++++
+# data : a data frame
+# varname : the name of a column containing the variable
+  #to be summariezed
+# groupnames : vector of column names to be used as
+  # grouping variables
+data_summary <- function(data, varname, groupnames){
+  require(plyr)
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE))
+  }
+  data_sum<-ddply(data, groupnames, .fun=summary_func,
+                  varname)
+  data_sum <- rename(data_sum, c("mean" = varname))
+ return(data_sum)
+}
+```
+
+## Load Data
+
+**Note**, if you don't plan on using the dflong data and you already ran this section and saved the manipulated wide data (line ~ 237) you can skip to line 238 and load the dfwide data frame. 
+
+```{r load biocrates data}
+# Load data
+getwd()
+dfwide <- readRDS("../../Data/Processed/Biocrates_AreaUnderCurve_meta.rds")
+dflong <- readRDS("../../Data/Processed/Biocrates_long_meta.rds")
+
+# Biocrates AUC data - don't merge this yet, just keep it for downstream analyses
+AUC_bioc <- read.csv("../../Data/Processed/Biocrates_AreaUnderCurve_AllMetabolites.csv", row.names = 1)
+```
+
+Prepare the long data for use. 
+
+Bin number classification:
+
+- 1st number is sex (1=female, 2=male)
+- 2nd number is age (18-33, 34-49, 50-65)
+- 3rd number is BMI (18.5-24.9, 25-29.9, 30-44)
+
+```{r dflong data preparation}
+str(dflong$pp_Time_min)
+str(dflong$bin_number)
+
+dflong$pp_Time_min <- factor(dflong$pp_Time_min, levels = c("0", "30", "180", "360"))
+
+#BMI
+dflong$bmi_bin <- dflong$bin_number
+dflong$bmi_bin <- gsub("..","", dflong$bmi_bin)
+#Age
+dflong$age_bin <- dflong$bin_number
+dflong$age_bin <- gsub("^.","", dflong$age_bin)
+dflong$age_bin <- gsub(".$","", dflong$age_bin)
+#Sex
+dflong$sex_bin <- dflong$bin_number
+dflong$sex_bin <- gsub("..$","", dflong$sex_bin)
+
+```
+
+Prep wide data and calculate meta variables 
+
+```{r dfwide data preparation}
+#BMI
+dfwide$bmi_bin <- dfwide$bin_number
+dfwide$bmi_bin <- gsub("..","", dfwide$bmi_bin)
+#Age
+dfwide$age_bin <- dfwide$bin_number
+dfwide$age_bin <- gsub("^.","", dfwide$age_bin)
+dfwide$age_bin <- gsub(".$","", dfwide$age_bin)
+#Sex
+dfwide$sex_bin <- dfwide$bin_number
+dfwide$sex_bin <- gsub("..$","", dfwide$sex_bin)
+# Sex factor
+str(dfwide$sex)
+dfwide$sex <- factor(dfwide$sex, levels = c(1, 2), labels = c("Male", "Female") )
+
+# calculate slope of change
+# rise/run = change in TMAO / change in time
+# slope 0 to 30
+dfwide$slope_0_30 <- (dfwide$TMAO.30 - dfwide$TMAO.0)/(30-0)
+# slope 30 to 180
+dfwide$slope_30_180 <- (dfwide$TMAO.180 - dfwide$TMAO.30)/(180-30)
+# slope 180 to 360
+dfwide$slope_180_360 <- (dfwide$TMAO.360 - dfwide$TMAO.180)/(360-180)
+
+# Make positive or negative factors based on slope
+dfwide$slope_sign_0_30 <- ifelse(dfwide$slope_0_30 > 0, "Positive", "Negative")
+dfwide$slope_sign_30_180 <- ifelse(dfwide$slope_30_180 > 0, "Positive", "Negative")
+dfwide$slope_sign_180_360 <- ifelse(dfwide$slope_180_360 > 0, "Positive", "Negative")
+# Factor
+dfwide$slope_sign_0_30 <- factor(dfwide$slope_sign_0_30, levels = c("Positive", "Negative"))
+dfwide$slope_sign_30_180 <- factor(dfwide$slope_sign_30_180, levels = c("Positive", "Negative"))
+dfwide$slope_sign_180_360 <- factor(dfwide$slope_sign_180_360, levels = c("Positive", "Negative"))
+
+# Make 1 variable classifier
+dfwide$slope_classifier <- ifelse(dfwide$slope_sign_0_30 == "Negative" & dfwide$slope_sign_30_180 == "Negative" & dfwide$slope_sign_180_360 == "Negative", "NNN",
+                                  ifelse(dfwide$slope_sign_0_30 == "Negative" & dfwide$slope_sign_30_180 == "Positive" & dfwide$slope_sign_180_360 == "Negative", "NPN",
+                                         ifelse(dfwide$slope_sign_0_30 == "Negative" & dfwide$slope_sign_30_180 == "Positive" & dfwide$slope_sign_180_360 == "Positive", "NPP",
+                                                ifelse(dfwide$slope_sign_0_30 == "Negative" & dfwide$slope_sign_30_180 == "Negative" & dfwide$slope_sign_180_360 == "Positive", "NNP",
+                                                       ifelse(dfwide$slope_sign_0_30 == "Positive" & dfwide$slope_sign_30_180 == "Positive" & dfwide$slope_sign_180_360 == "Positive", "PPP",
+                                                              ifelse(dfwide$slope_sign_0_30 == "Positive" & dfwide$slope_sign_30_180 == "Negative" & dfwide$slope_sign_180_360 == "Positive", "PNP",
+                                                                     ifelse(dfwide$slope_sign_0_30 == "Positive" & dfwide$slope_sign_30_180 == "Negative" & dfwide$slope_sign_180_360 == "Negative", "PNN", "PPN")))))))
+
+table(dfwide$slope_classifier)
+
+```
+
+Make peak TMAO by time variables
+
+```{r Create peak TMAO variable}
+dfwide$peakTMAO <- ifelse(dfwide$TMAO.0 >= dfwide$TMAO.30 & 
+                            dfwide$TMAO.0 >= dfwide$TMAO.180 & 
+                              dfwide$TMAO.0 >= dfwide$TMAO.360, "peak0",
+                          ifelse(dfwide$TMAO.30 >= dfwide$TMAO.0 &
+                                   dfwide$TMAO.30 >= dfwide$TMAO.180 &
+                                    dfwide$TMAO.30 >= dfwide$TMAO.360, "peak30", 
+                                 ifelse(dfwide$TMAO.180 >= dfwide$TMAO.0 &
+                                          dfwide$TMAO.180 >= dfwide$TMAO.30 &
+                                            dfwide$TMAO.180 >= dfwide$TMAO.360, "peak180", "peak360")))
+
+# Set levels
+dfwide$peakTMAO <- factor(dfwide$peakTMAO, levels = c("peak0", "peak30", "peak180", "peak360"))
+
+# Distribution of ppl by peak TMAO concentration
+table(dfwide$peakTMAO)
+# Breakdown by sex
+table(dfwide$peakTMAO, dfwide$sex)
+
+# Prep
+rownames(dfwide) <- dfwide[,1]
+dfwide <- subset(dfwide, select=-c(Subject_ID))
+
+# Get list of peak TMAO classifications and subject IDs
+peakTMAO_group <- dfwide[,"peakTMAO", drop = FALSE]
+
+# Append to AUC - will use downstream
+AUC_bioc <- merge(peakTMAO_group, AUC_bioc, by=0, all.x=TRUE, all.y=FALSE)
+row.names(AUC_bioc) <- AUC_bioc[,1]
+AUC_bioc <- AUC_bioc[,-1]
+```
+
+## Load Ethnicity Data
+
+Merge dfwide data with ethnicity data
+
+```{r ethnicity data}
+# Ethnicity data
+eth <- read.csv("../../Data/Raw/demographic/ethnicity_210715.csv",row.names = 1)
+
+# Merge
+dfwide <- merge(dfwide, eth, by = 0)
+rownames(dfwide) <- dfwide[,1]
+dfwide <- subset(dfwide, select=-c(Row.names))
+```
+
+## Load AUC Inflammation Data
+
+Merge dfwide data with AUC data
+
+```{r TMAO merge with AUC-clin data}
+clin <- readRDS("../../Data/Processed/Clinical_Inflammation_AreaUnderCurve.rds")
+#clin <- readRDS("../../Data/Processed/Clinical_AreaUnderCurve.rds")
+dfwide <- merge(dfwide, clin, by = 0, all.x = T, all.y = F)
+rownames(dfwide) <- dfwide[,1]
+dfwide <- dfwide[,-1]
+```
+
+Save for analyses outside this workflow. 
+
+If you have already run the above chunks and saved the modified dfwide, you can start here. 
+```{r save dfwide with metavariables}
+# Updated clin with AUC for HDL, LDL, TC, inflammation in addition to other variables
+#saveRDS(dfwide, "../../Data/Processed/dfwide_metavariables_n97_inflam.rds")
+#write.csv(dfwide, "../../Data/Processed/dfwide_metavariables_n97_inflam.csv")
+#write.csv(dfwide, "../../Data/Processed/dfwide_metavariables_n97_inflam_eth.csv") # added ethn
+dfwide <- read.csv("../../Data/Processed/dfwide_metavariables_n97_inflam_eth.csv", row.names = 1) # load if needed
+str(dfwide$sex)
+str(dfwide$age_bin)
+str(dfwide$bmi_bin)
+dfwide$age_bin <- as.factor(dfwide$age_bin)
+dfwide$bmi_bin <- as.factor(dfwide$bmi_bin)
+dfwide$sex <- as.factor(dfwide$sex)
+table(dfwide$sex)
+
+# Biocrates AUC data - don't merge this yet, just keep it for downstream analyses
+AUC_bioc <- read.csv("../../Data/Processed/Biocrates_AreaUnderCurve_AllMetabolites.csv", row.names = 1)
+# Get list of peak TMAO classifications and subject IDs
+peakTMAO_group <- dfwide[,"peakTMAO", drop = FALSE]
+
+# Append to AUC - will use downstream
+AUC_bioc <- merge(peakTMAO_group, AUC_bioc, by=0, all.x=TRUE, all.y=FALSE)
+row.names(AUC_bioc) <- AUC_bioc[,1]
+AUC_bioc <- AUC_bioc[,-1]
+# original clin with AUC for TG, gluc, insulin only
+#aveRDS(dfwide, "../../Data/Processed/dfwide_metavariables_n97.rds")
+#write.csv(dfwide, "../../Data/Processed/dfwide_metavariables_n97.csv")
+```
+
+# Basic Stats 
+
+## peakTMAO by sex, age, bmi
+
+Does peakTMAO group differ by sex, age, or BMI?
+
+```{r peakTMAO age sex BMI}
+# Different by sex? Age? BMI?
+# Age
+aov1 <- aov(age ~ peakTMAO, dfwide)
+summary(aov1)
+TukeyHSD(aov1)
+
+# Sex
+chisq.test(dfwide$sex, dfwide$peakTMAO)
+
+# BMI
+aov1 <- aov(bmi_final ~ peakTMAO, dfwide)
+summary(aov1)
+TukeyHSD(aov1)
+
+# cystatin C
+aov1 <- aov(cystatinc_bd1 ~ peakTMAO, dfwide)
+summary(aov1)
+TukeyHSD(aov1)
+
+# Nope, none different
+```
+
+## AUC-TMAO by sex, age, bmi
+
+Does AUC-TMAO relate to sex, age, or BMI?
+
+```{r AUC-TMAO age sex BMI}
+summary(lm(log(AUC_TMAO_uM_hour) ~ sex + age + bmi_final + cystatinc_bd1, dfwide))
+summary(lm(log(AUC_TMAO_uM_hour) ~ sex*age + bmi_final + cystatinc_bd1, dfwide))
+summary(lm(log(AUC_TMAO_uM_hour) ~ sex, dfwide)) # report
+summary(lm(log(AUC_TMAO_uM_hour) ~ age, dfwide)) # report
+summary(lm(log(AUC_TMAO_uM_hour) ~ bmi_final, dfwide)) # report
+summary(lm(log(AUC_TMAO_uM_hour) ~ cystatinc_bd1, dfwide))
+summary(lm(log(AUC_TMAO_uM_hour) ~ sex*age + cystatinc_bd1, dfwide))
+
+# Type 2 sums of squares with cars package ANOVA
+aov_T2ss <- lm(log(AUC_TMAO_uM_hour) ~ sex*age, dfwide)
+car::Anova(aov_T2ss, type = "II") # report
+
+# Plot sex by age interaction
+ggplot(data = dfwide, aes(x = age, y = log(AUC_TMAO_uM_hour), group = sex, color = sex)) + 
+  geom_point() +
+  geom_smooth(method = lm) +
+  theme_bw() +
+  ylab( bquote("Ln of AUC-TMAO (" ~mu~ "M / hr)")) +
+  xlab("Age (yrs)") +
+  scale_color_brewer(palette = "Dark2") +
+  labs(color = "Sex") +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+
+# Save
+ggsave("../../plots/SexByAge_Int_AUCTMAO_Scatterplot_v2.jpg",
+       width = 8, 
+       height = 6, 
+       dpi = 300)
+
+```
+
+
+##  Show descriptive distributions of people
+
+```{r descriptive tables}
+# Age bin
+table(dfwide$age_bin)
+
+# Ethnicity
+table(dfwide$ethnicity)
+65/97
+```
+
+## Correlation TMAO and AUC-TMAO
+
+What is correlation between AUC TMAO and baseline TMAO?
+
+```{r correlate AUC-TMAO and fasting TMAO}
+# Raw values
+Hmisc::rcorr(dfwide$TMAO.0, dfwide$AUC_TMAO_uM_hour)
+Hmisc::rcorr(dfwide$TMAO.0[dfwide$sex == "Male"], dfwide$AUC_TMAO_uM_hour[dfwide$sex == "Male"]) # tigher in males
+Hmisc::rcorr(dfwide$TMAO.0[dfwide$sex == "Female"], dfwide$AUC_TMAO_uM_hour[dfwide$sex == "Female"]) # looser in females
+
+# Transformed
+Hmisc::rcorr(log(dfwide$TMAO.0), log(dfwide$AUC_TMAO_uM_hour))
+Hmisc::rcorr(log(dfwide$TMAO.0[dfwide$sex == "Male"]), log(dfwide$AUC_TMAO_uM_hour[dfwide$sex == "Male"])) # tigher in males
+Hmisc::rcorr(log(dfwide$TMAO.0[dfwide$sex == "Female"]), log(dfwide$AUC_TMAO_uM_hour[dfwide$sex == "Female"])) # looser in females
+# Report logged values in paper
+
+# Plot raw values
+y_variable <- bquote("Fasting TMAO (" ~mu~ "M )")
+x_variable <- bquote("Area Under the Curve of TMAO (" ~mu~ "M/hr)")
+#mdn_cut <- log(median(df2$AUC_TMAO_uM_min_NegSqrRt))
+# Plot
+TMAO_plot <- ggplot(dfwide, aes(x=AUC_TMAO_uM_hour, y=TMAO.0)) +
+  geom_point(aes(shape=bmi_bin, color = age_bin)) +
+  #geom_vline(xintercept = mdn_cut, linetype = "dashed") +
+  geom_smooth(method = "lm", se = FALSE, fullrange = F) +
+  theme_bw() + 
+  ylab(y_variable) +
+  xlab(x_variable) +
+  scale_shape_discrete(name="BMI Bin (kg/m^2)", labels=c("18.5-24", "25-29", "30>")) +
+  scale_color_brewer(palette = "Dark2",name="Age Bin (yr)", labels=c("18-33", "34-49", "50-65")) +
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 12), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 12), # label legend text size
+        axis.text.x = element_text(angle = 45, hjust = .25, vjust=0.5))
+TMAO_plot
+
+# Save
+ggsave("../../plots/FastingTMAO_TMAOAUC_hr_Scatterplot_v2.jpg",
+       width = 8, 
+       height = 6, 
+       dpi = 300)
+
+# Plot log transformed values
+y_variable <- bquote("Ln of Fasting TMAO (" ~mu~ "M )")
+x_variable <- bquote("Ln of Area Under the Curve of TMAO (" ~mu~ "M/hr)")
+#mdn_cut <- log(median(df2$AUC_TMAO_uM_min_NegSqrRt))
+# Plot
+TMAO_plot_log <- ggplot(dfwide, aes(x=log(AUC_TMAO_uM_hour), y=log(TMAO.0))) +
+  geom_point(aes(shape=bmi_bin, color = age_bin)) +
+  #geom_vline(xintercept = mdn_cut, linetype = "dashed") +
+  geom_smooth(method = "lm", se = FALSE, fullrange = F) +
+  theme_bw() + 
+  ylab(y_variable) +
+  xlab(x_variable) +
+  scale_shape_discrete(name="BMI Bin (kg/m^2)", labels=c("18.5-24", "25-29", "30>")) +
+  scale_color_brewer(palette = "Dark2",name="Age Bin (yr)", labels=c("18-33", "34-49", "50-65")) +
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 12), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 12), # label legend text size
+        axis.text.x = element_text( hjust = .25, vjust=0.5))
+TMAO_plot_log
+
+# Save
+ggsave("../../plots/FastingTMAO_TMAOAUC_hr_Ln_Scatterplot_v2.jpg",
+       width = 8, 
+       height = 6, 
+       dpi = 300)
+
+# Plot log transformed values - color by sex
+y_variable <- bquote("ln of Fasting TMAO (" ~mu~ "M )")
+x_variable <- bquote("ln of Area Under the Curve of TMAO (" ~mu~ "M/hr)")
+#mdn_cut <- log(median(df2$AUC_TMAO_uM_min_NegSqrRt))
+# Plot
+TMAO_plot_log_sex <- ggplot(dfwide, aes(x=log(AUC_TMAO_uM_hour), y=log(TMAO.0))) +
+  geom_point(aes(shape=sex, color = age_bin)) +
+  #geom_vline(xintercept = mdn_cut, linetype = "dashed") +
+  geom_smooth(method = "lm", se = FALSE, fullrange = F) +
+  theme_bw() + 
+  ylab(y_variable) +
+  xlab(x_variable) +
+  scale_shape_discrete(name="Sex") +
+  scale_color_brewer(palette = "Dark2",name="Age Bin (yr)", labels=c("18-33", "34-49", "50-65")) +
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 12), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 12), # label legend text size
+        axis.text.x = element_text(hjust = .25, vjust=0.5))
+TMAO_plot_log_sex
+
+# Save
+ggsave("../../plots/FastingTMAO_TMAOAUC_hr_Ln_sex_Scatterplot_v2.jpg",
+       width = 8, 
+       height = 6, 
+       dpi = 300)
+
+TMAO_plot_log_sex_grp <- ggplot(dfwide, aes(x=log(AUC_TMAO_uM_hour), y=log(TMAO.0), group = sex, color = sex)) +
+  geom_point(aes(shape=age_bin)) +
+  geom_smooth(method = "lm", se = TRUE, fullrange = F) +
+  theme_bw() + 
+  ylab(y_variable) +
+  xlab(x_variable) +
+  scale_color_brewer(palette = "Dark2", name = "Sex") +
+  scale_shape_discrete(name="Age Bin (yr)", labels=c("18-33", "34-49", "50-65")) +
+  theme(axis.text = element_text(size = 12), # x and y axis text size
+        axis.title = element_text(size = 14), # x and y label text size
+        legend.text = element_text(size = 12), # legend text size
+        legend.title = element_text(size = 14), # label legend text size
+        axis.text.x = element_text( hjust = .25, vjust=0.5))
+TMAO_plot_log_sex_grp
+
+# Save
+ggsave("../../plots/FastingTMAO_TMAOAUC_hr_Ln_sex_group_Scatterplot_v2.jpg",
+       width = 8, 
+       height = 6, 
+       dpi = 300) # use this plot
+
+```
+
+
+## AUC and Clinical Chem
+
+Look at AUC-TMAO and insulin, TG, glucose, cholesterol, and inflammation. Note, the variables have been tested for compliance to the normal distribution.
+
+Note, peakTMAO p values here are reported in the "unplaced table". 
+
+```{r AUC tmao and clin chem}
+# AUC Totals
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ insulin_AUC_pheno_hr_ln + sex*age, dfwide))
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ triglycerides_AUC_pheno_hr_ln + sex*age, dfwide))
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ glucose_AUC_pheno_hr + sex*age, dfwide))
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ HDL_AUC_pheno_hr_ln + sex*age, dfwide))
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ LDL_AUC_pheno_hr + sex*age, dfwide))
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ chol_AUC_pheno_hr + sex*age, dfwide))
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ tnfa_AUC_pheno_hr_ln + sex*age, dfwide)) # yes
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ il6_AUC_pheno_hr_ln + sex*age, dfwide))
+summary(lm(log(dfwide$AUC_TMAO_uM_hour) ~ crp_AUC_pheno_hr_ln + sex*age, dfwide)) 
+
+# Because there is an interaction term, check the sums of squares type
+my_lm_model <- lm(log(dfwide$AUC_TMAO_uM_hour) ~ tnfa_AUC_pheno_hr_ln + sex*age, dfwide) # yes
+car::Anova(my_lm_model, type = "III")
+
+# peakTMAO
+summary(aov(insulin_AUC_pheno_hr_ln ~ peakTMAO, dfwide))
+summary(aov(triglycerides_AUC_pheno_hr_ln ~ peakTMAO, dfwide))
+summary(aov(glucose_AUC_pheno_hr ~ peakTMAO, dfwide)) # yes
+summary(aov(HDL_AUC_pheno_hr_ln ~ peakTMAO, dfwide))
+summary(aov(LDL_AUC_pheno_hr ~ peakTMAO, dfwide))
+summary(aov(chol_AUC_pheno_hr ~ peakTMAO, dfwide))
+summary(aov(tnfa_AUC_pheno_hr_ln ~ peakTMAO, dfwide)) 
+summary(aov(il6_AUC_pheno_hr_ln ~ peakTMAO, dfwide))
+summary(aov(crp_AUC_pheno_hr_ln ~ peakTMAO, dfwide)) 
+summary(aov(log(dfwide$AUC_TMAO_uM_hour) ~ peakTMAO, dfwide)) 
+
+# Post hoc testing
+my_aov_gluc <- aov(glucose_AUC_pheno_hr ~ peakTMAO, dfwide) # yes
+TukeyHSD(my_aov_gluc)
+
+my_aov_AUCtmao <- aov(aov(log(dfwide$AUC_TMAO_uM_hour) ~ peakTMAO, dfwide)) # yes
+TukeyHSD(my_aov_AUCtmao)
+```
+
+### Peak 0 group
+
+```{r AUC tmao and clin chem - peak 0 }
+# AUC Totals (most useful and many reported in paper)
+summary(lm(log(AUC_TMAO_uM_hour) ~ insulin_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak0",])) # 0.007
+summary(lm(log(AUC_TMAO_uM_hour) ~ triglycerides_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak0",])) # 0.0028
+summary(lm(log(AUC_TMAO_uM_hour) ~ glucose_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak0",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ HDL_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak0",])) # 0.054
+summary(lm(log(AUC_TMAO_uM_hour) ~ LDL_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak0",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ chol_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak0",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ tnfa_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak0",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ il6_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak0",])) # 0.0044
+summary(lm(log(AUC_TMAO_uM_hour) ~ crp_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak0",])) # 0.029
+
+```
+
+### Peak 30
+
+```{r AUC tmao and clin chem - peak 30 }
+# AUC Totals
+summary(lm(log(AUC_TMAO_uM_hour) ~ insulin_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak30",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ triglycerides_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak30",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ glucose_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak30",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ HDL_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak30",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ LDL_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak30",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ chol_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak30",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ tnfa_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak30",])) #0.003
+summary(lm(log(AUC_TMAO_uM_hour) ~ il6_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak30",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ crp_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak30",])) 
+
+```
+
+### Peak 180
+
+```{r AUC tmao and clin chem - peak 180 }
+# AUC Totals
+summary(lm(log(AUC_TMAO_uM_hour) ~ insulin_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak180",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ triglycerides_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak180",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ glucose_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak180",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ HDL_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak180",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ LDL_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak180",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ chol_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak180",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ tnfa_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak180",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ il6_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak180",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ crp_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak180",])) 
+
+```
+
+### Peak 360
+
+```{r AUC tmao and clin chem - peak 360 }
+# AUC Totals
+summary(lm(log(AUC_TMAO_uM_hour) ~ insulin_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak360",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ triglycerides_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak360",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ glucose_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak360",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ HDL_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak360",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ LDL_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak360",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ chol_AUC_pheno_hr + sex*age, dfwide[dfwide$peakTMAO == "peak360",]))
+summary(lm(log(AUC_TMAO_uM_hour) ~ tnfa_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak360",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ il6_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak360",])) 
+summary(lm(log(AUC_TMAO_uM_hour) ~ crp_AUC_pheno_hr_ln + sex*age, dfwide[dfwide$peakTMAO == "peak360",])) 
+
+```
+We are looking at the relationships between total AUC of different blood markers in response to a MMTT depending on when a person's peak TMAO occurs. We find that there are some differences by AUC-TMAO. In the full cohort, TNF-a reigns supreme like our [James et al., Nutrients, 2022](https://www.mdpi.com/2072-6643/14/7/1376) manuscript reported. Here, when we break the cohort into smaller groups by their metabolic response type, we do identify some additional relationships. For example, relationships between TMAO-TG and TMAO-insulin only occurs in the peak0m, the group with peak TMAO concentration at fasting. This shows how the postprandial response of metabolites differs based on TMAO group.
+
+## AUC-TMAO ~ AUC-CVD Biomarker Plot
+### Correlations
+
+What is the correlation of AUC variables? Use the correlations to create a heat plot.
+
+```{r AUC Hmisc rcorr correlations}
+dfcor <- dfwide
+colnames(dfcor)
+dfcor$AUC_TMAO_uM_hour_ln <- log(dfcor$AUC_TMAO_uM_hour)
+# KJ updated to use ln versions on 10/10/22
+#cor_keep <- c("AUC_TMAO_uM_hour_NegSqrRt", "triglycerides_AUC_pheno_hr_NegSqrRt", "glucose_AUC_pheno_hr_NegSqrRt", "insulin_AUC_pheno_hr_NegSqrRt", "HDL_AUC_pheno_hr_NegSqrRt", "LDL_AUC_pheno_hr_NegSqrRt", "chol_AUC_pheno_hr_NegSqrRt", "tnfa_AUC_pheno_hr_NegSqrRt", "il6_AUC_pheno_hr_NegSqrRt", "crp_AUC_pheno_hr_NegSqrRt", "peakTMAO")
+cor_keep <- c("AUC_TMAO_uM_hour_ln", "triglycerides_AUC_pheno_hr_ln", "glucose_AUC_pheno_hr", "insulin_AUC_pheno_hr_ln", "HDL_AUC_pheno_hr_ln", "LDL_AUC_pheno_hr", "chol_AUC_pheno_hr", "tnfa_AUC_pheno_hr_ln", "il6_AUC_pheno_hr_ln", "crp_AUC_pheno_hr_ln", "peakTMAO")
+dfcor2 <- dfcor[,cor_keep]
+str(dfcor2)
+
+# Correlate all data
+#library("Hmisc")
+res <- rcorr(as.matrix(dfcor2)[,-11], type = "pearson") # pearson bc using normal data
+flatres <- flattenCorrMatrix(res$r, res$P)
+flatres
+
+# Correlate by peakTMAO group
+# peak0
+res <- rcorr(as.matrix(dfcor2)[dfcor2$peakTMAO == "peak0",-11], type = "pearson") # use peak0 people and don't correlate the last non-numeric column, peakTMAO
+flatres0 <- flattenCorrMatrix(res$r, res$P)
+flatres0
+
+# peak30
+res <- rcorr(as.matrix(dfcor2)[dfcor2$peakTMAO == "peak30",-11], type = "pearson") # use peak30 people and don't correlate the last non-numeric column, peakTMAO
+flatres30 <- flattenCorrMatrix(res$r, res$P)
+flatres30
+
+# peak180
+res <- rcorr(as.matrix(dfcor2)[dfcor2$peakTMAO == "peak180",-11], type = "pearson") # use peak180 people and don't correlate the last non-numeric column, peakTMAO
+flatres180 <- flattenCorrMatrix(res$r, res$P)
+flatres180
+
+# peak360
+res <- rcorr(as.matrix(dfcor2)[dfcor2$peakTMAO == "peak360",-11], type = "pearson") # use peak360 people and don't correlate the last non-numeric column, peakTMAO
+flatres360 <- flattenCorrMatrix(res$r, res$P)
+flatres360
+```
+
+### Plot
+
+Plot heat map by group. Visualize that you see unique signals in the whole cohort and when you look at response type.
+
+
+```{r AUC TMAO Clin chem cor plot}
+ggdat_all <- flatres
+ggdat_all <- ggdat_all[ggdat_all$row == "AUC_TMAO_uM_hour_ln",]
+ggdat_all$peakGroup <- "AUC TMAO - All"  
+
+ggdat_0 <- flatres0
+ggdat_0 <- ggdat_0[ggdat_0$row == "AUC_TMAO_uM_hour_ln",]
+ggdat_0$peakGroup <- "AUC TMAO - Peak 0m"  
+
+ggdat_30 <- flatres30
+ggdat_30 <- ggdat_30[ggdat_30$row == "AUC_TMAO_uM_hour_ln",]
+ggdat_30$peakGroup <- "AUC TMAO - Peak 30m"  
+
+ggdat_180 <- flatres180
+ggdat_180 <- ggdat_180[ggdat_180$row == "AUC_TMAO_uM_hour_ln",]
+ggdat_180$peakGroup <- "AUC TMAO - Peak 3hr"  
+
+ggdat_360 <- flatres360
+ggdat_360 <- ggdat_360[ggdat_360$row == "AUC_TMAO_uM_hour_ln",]
+ggdat_360$peakGroup <- "AUC TMAO - Peak 6hr"  
+
+#rbind
+ggdat <- rbind(ggdat_all, ggdat_0, ggdat_30, ggdat_180, ggdat_360)
+
+# Add stars
+ggdat$stars <- cut(ggdat$p,
+                       breaks=c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+                       label=c("***", "**", "*", "."," "))
+
+# Rename column levels
+ggdat$column <- dplyr::recode_factor(ggdat$column, 
+                                     triglycerides_AUC_pheno_hr_ln  = "AUC Triglycerides", 
+                                     glucose_AUC_pheno_hr = "AUC Glucose", 
+                                     insulin_AUC_pheno_hr_ln = "AUC Insulin",
+                                     HDL_AUC_pheno_hr_ln = "AUC HDL", 
+                                     LDL_AUC_pheno_hr = "AUC LDL",
+                                     chol_AUC_pheno_hr = "AUC Total Cholesterol",
+                                     tnfa_AUC_pheno_hr_ln = "AUC TNF-a",
+                                     il6_AUC_pheno_hr_ln = "AUC IL-6",
+                                     crp_AUC_pheno_hr_ln = "AUC CRP")
+str(ggdat)
+
+ggdat$peakGroup <- factor(ggdat$peakGroup, levels = c("AUC TMAO - All", "AUC TMAO - Peak 0m", "AUC TMAO - Peak 30m", "AUC TMAO - Peak 3hr", "AUC TMAO - Peak 6hr"))
+
+
+# Plot
+ggp <- ggplot(ggdat, aes(peakGroup, column)) +
+  geom_tile(aes(fill = cor)) +
+  xlab("") + ylab("") +
+  theme_light() +
+  theme(text=element_text(size=13),
+        axis.text.x = element_text(angle=45, hjust=1)) +
+  scale_fill_gradient2(low="#2C7BB6",
+                       mid="white",
+                       high="#D7191C") +
+  labs(fill = "Correlation to\n TMAO") +
+  geom_text(aes(label=stars), color="black", size=3)
+ggp  
+
+
+# Save!
+ggsave(paste0("../../plots/AUC_ClinChem_TMAO_Correlation_plotStars_morePhenos_v2.jpeg"), ggp, 
+       width = 6, 
+       height = 5, 
+       dpi = 300)
+
+
+```
+
+### Correlations Fasting
+
+Create the same thing for the fasting values (to make the point that there is or is not value in looking at AUC).
+
+```{r AUC Hmisc rcorr correlations fasting}
+dfcor <- dfwide
+colnames(dfcor)
+#dfcor$AUC_TMAO_uM_min_ln <- log(dfcor$AUC_TMAO_uM_min)
+#dfcor$triglycerides_bd1_0m_ln <- log(dfcor$triglycerides_bd1_0m)
+#dfcor$glucose_bd1_0m_ln <- log(dfcor$glucose_bd1_0m) # ok
+#dfcor$insulin_bd1_0m_ln <- log(dfcor$insulin_bd1_0m)
+#dfcor$HDL_bd1_0m_ln <- log(dfcor$HDL_bd1_0m)
+#dfcor$LDL_bd1_0m_ln <- log(dfcor$LDL_bd1_0m)
+#dfcor$chol_bd1_0m_ln <- log(dfcor$chol_bd1_0m)
+#dfcor$tnfa_bd1_0m_ln <- log(dfcor$tnfa_bd1_0m)
+#dfcor$il6_bd1_0m_ln <- log(dfcor$il6_bd1_0m) # ok
+#dfcor$crp_bd1_0m_ln <- log(dfcor$crp_bd1_0m)
+
+cor_keep <- c("AUC_TMAO_uM_hour", "triglycerides_bd1_0m", "glucose_bd1_0m", "insulin_bd1_0m", "HDL_bd1_0m", "LDL_bd1_0m", "chol_bd1_0m", "tnfa_bd1_0m", "il6_bd1_0m", "crp_bd1_0m", "peakTMAO")
+#cor_keep <- c("AUC_TMAO_uM_min_ln", "triglycerides_bd1_0m_ln", "glucose_bd1_0m_ln", "insulin_bd1_0m_ln", "HDL_bd1_0m_ln", "LDL_bd1_0m_ln", "chol_bd1_0m_ln", "tnfa_bd1_0m_ln", "il6_bd1_0m_ln", "crp_bd1_0m_ln", "peakTMAO")
+dfcor2 <- dfcor[,cor_keep]
+str(dfcor2)
+
+# Log dataframe
+dfcor_ln <- log(dfcor2[,1:10])
+dfcor_ln <- cbind(dfcor_ln, dfcor2[,11])
+
+# Correlate all data
+#library("Hmisc")
+res <- rcorr(as.matrix(dfcor2)[,-11], type = "pearson") # pearson bc using normal data
+flatres <- flattenCorrMatrix(res$r, res$P)
+flatres
+
+# Correlate by peakTMAO group
+# peak0
+res <- rcorr(as.matrix(dfcor2)[dfcor2$peakTMAO == "peak0",-11], type = "pearson") # use peak0 people and don't correlate the last non-numeric column, peakTMAO
+flatres0 <- flattenCorrMatrix(res$r, res$P)
+flatres0
+
+# peak30
+res <- rcorr(as.matrix(dfcor2)[dfcor2$peakTMAO == "peak30",-11], type = "pearson") # use peak30 people and don't correlate the last non-numeric column, peakTMAO
+flatres30 <- flattenCorrMatrix(res$r, res$P)
+flatres30
+
+# peak180
+res <- rcorr(as.matrix(dfcor2)[dfcor2$peakTMAO == "peak180",-11], type = "pearson") # use peak180 people and don't correlate the last non-numeric column, peakTMAO
+flatres180 <- flattenCorrMatrix(res$r, res$P)
+flatres180
+
+# peak360
+res <- rcorr(as.matrix(dfcor2)[dfcor2$peakTMAO == "peak360",-11], type = "pearson") # use peak360 people and don't correlate the last non-numeric column, peakTMAO
+flatres360 <- flattenCorrMatrix(res$r, res$P)
+flatres360
+```
+
+### Plot Fasting
+
+```{r AUC TMAO Clin chem cor plot fasting}
+ggdat_all <- flatres
+ggdat_all <- ggdat_all[ggdat_all$row == "AUC_TMAO_uM_hour",]
+ggdat_all$peakGroup <- "AUC TMAO - All"  
+
+ggdat_0 <- flatres0
+ggdat_0 <- ggdat_0[ggdat_0$row == "AUC_TMAO_uM_hour",]
+ggdat_0$peakGroup <- "AUC TMAO - Peak 0m"  
+
+ggdat_30 <- flatres30
+ggdat_30 <- ggdat_30[ggdat_30$row == "AUC_TMAO_uM_hour",]
+ggdat_30$peakGroup <- "AUC TMAO - Peak 30m"  
+
+ggdat_180 <- flatres180
+ggdat_180 <- ggdat_180[ggdat_180$row == "AUC_TMAO_uM_hour",]
+ggdat_180$peakGroup <- "AUC TMAO - Peak 3hr"  
+
+ggdat_360 <- flatres360
+ggdat_360 <- ggdat_360[ggdat_360$row == "AUC_TMAO_uM_hour",]
+ggdat_360$peakGroup <- "AUC TMAO - Peak 6hr"  
+
+#rbind
+ggdat <- rbind(ggdat_all, ggdat_0, ggdat_30, ggdat_180, ggdat_360)
+
+# Add stars
+ggdat$stars <- cut(ggdat$p,
+                       breaks=c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+                       label=c("***", "**", "*", "."," "))
+
+# Rename column levels
+ggdat$column <- dplyr::recode_factor(ggdat$column, 
+                                     triglycerides_bd1_0m  = "Fasting Triglycerides", 
+                                     glucose_bd1_0m = "Fasting Glucose", 
+                                     insulin_bd1_0m = "Fasting Insulin",
+                                     HDL_bd1_0m = "Fasting HDL", 
+                                     LDL_bd1_0m = "Fasting LDL",
+                                     chol_bd1_0m = "Fasting Total Cholesterol",
+                                     tnfa_bd1_0m = "Fasting TNF-a",
+                                     il6_bd1_0m = "Fasting IL-6",
+                                     crp_bd1_0m = "Fasting CRP")
+
+str(ggdat)
+
+ggdat$peakGroup <- factor(ggdat$peakGroup, levels = c("AUC TMAO - All", "AUC TMAO - Peak 0m", "AUC TMAO - Peak 30m", "AUC TMAO - Peak 3hr", "AUC TMAO - Peak 6hr"))
+
+
+# Plot
+ggp <- ggplot(ggdat, aes(peakGroup, column)) +
+  geom_tile(aes(fill = cor)) +
+  xlab("") + ylab("") +
+  theme_light() +
+  theme(text=element_text(size=13),
+        axis.text.x = element_text(angle=45, hjust=1)) +
+  scale_fill_gradient2(low="#2C7BB6",
+                       mid="white",
+                       high="#D7191C") +
+  labs(fill = "Correlation to\n TMAO") +
+  geom_text(aes(label=stars), color="black", size=3)
+ggp  
+
+
+# Save!
+ggsave(paste0("../../plots/Fasting_ClinChem_TMAO_Correlation_plotStars_morePhenos_v2.jpeg"), ggp, 
+       width = 6, 
+       height = 5, 
+       dpi = 300)
+
+
+```
+
+## AUC Biocrates and AUC TMAO Correlations 
+
+Are there differences between AUC-Biocrates variables and AUC-TMAO? We are interested in the phosphatidylcholines, lysophosphatidylcholines, bile acids, and uremic toxins. 
+
+Use psych::corr.test() because it reports p-values and lets you correct for multiple testing. 
+
+```{r spearman AUC correlations}
+colnames(AUC_bioc)
+
+# Whole cohort
+colnames(AUC_bioc)
+b=apply(AUC_bioc[,c(39,72,79:92,153,203:288,324)],2,function(x){
+  psych::corr.test(AUC_bioc[,"TMAO"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.adj")
+head(p.val)  
+r.cor <- sapply(b,"[[","r")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+colnames(pr) <- c("p.adj.BH", "r")
+AUC_cor <- pr
+AUC_cor
+
+# peak 0
+AUC_bioc_pk0 <- AUC_bioc[AUC_bioc$peakTMAO=="peak0",]
+b=apply(AUC_bioc_pk0[,c(39,72,79:92,153,203:288,324)],2,function(x){
+  psych::corr.test(AUC_bioc_pk0[,"TMAO"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.adj")
+head(p.val)  
+r.cor <- sapply(b,"[[","r")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+colnames(pr) <- c("p.adj.BH", "r")
+AUC_cor_bd0 <- pr
+AUC_cor_bd0
+
+# peak 30m
+AUC_bioc_pk30 <- AUC_bioc[AUC_bioc$peakTMAO=="peak30",]
+b=apply(AUC_bioc_pk30[,c(39,72,79:92,153,203:288,324)],2,function(x){
+  psych::corr.test(AUC_bioc_pk30[,"TMAO"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.adj")
+head(p.val)  
+r.cor <- sapply(b,"[[","r")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+colnames(pr) <- c("p.adj.BH", "r")
+AUC_cor_bd30 <- pr
+AUC_cor_bd30
+
+# peak 3hr
+AUC_bioc_pk180 <- AUC_bioc[AUC_bioc$peakTMAO=="peak180",]
+b=apply(AUC_bioc_pk180[,c(39,72,79:92,153,203:288,324)],2,function(x){
+  psych::corr.test(AUC_bioc_pk180[,"TMAO"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.adj")
+head(p.val)  
+r.cor <- sapply(b,"[[","r")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+colnames(pr) <- c("p.adj.BH", "r")
+AUC_cor_bd180 <- pr
+AUC_cor_bd180
+
+# peak 6hr
+AUC_bioc_pk360 <- AUC_bioc[AUC_bioc$peakTMAO=="peak360",]
+b=apply(AUC_bioc_pk360[,c(39,72,79:92,153,203:288,324)],2,function(x){
+  psych::corr.test(AUC_bioc_pk360[,"TMAO"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.adj")
+head(p.val)  
+r.cor <- sapply(b,"[[","r")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+colnames(pr) <- c("p.adj.BH", "r")
+AUC_cor_bd360 <- pr
+AUC_cor_bd360
+
+# Combine
+AUC_cor_results <- cbind(AUC_cor, AUC_cor_bd0, AUC_cor_bd30, AUC_cor_bd180, AUC_cor_bd360)
+
+# Save
+#write.csv(AUC_cor_results, "../../tables/auc_correlations/AUC_Biocrates_Metabolites_by_PeakTMAOGroup.csv") # used cor.test which idk if it actually applied FDR correction
+#write.csv(AUC_cor_results, "../../tables/auc_correlations/AUC_Biocrates_Metabolites_by_PeakTMAOGroup_corr.test.csv") # limit metabolite to a priori hypothesis 
+write.csv(AUC_cor_results, "../../tables/auc_correlations/AUC_Biocrates_Metabolites_by_PeakTMAOGroup_corr.test_apriori.csv")
+```
+
+If you quartile AUCTMAO are there differences in health parameters?
+
+Does correlation of AUC variables differ by peak TMAO group?
+
+```{r Anova - peakGroup by AUC phenos}
+# Does when you peak effect your total AUC? 
+aov1 <- aov(dfwide$AUC_TMAO_uM_min_NegSqrRt ~ peakTMAO, dfwide)
+summary(aov1)
+TukeyHSD(aov1)
+
+aggregate(dfwide$AUC_TMAO_uM_min, list(dfwide$peakTMAO), FUN = mean)
+
+# TG
+aovTG <- aov(dfwide$triglycerides_AUC_pheno_min_NegSqrRt ~ peakTMAO, dfwide)
+summary(aovTG)
+TukeyHSD(aovTG)
+
+# Insulin
+aovIns <- aov(dfwide$insulin_AUC_pheno_min_NegSqrRt ~ peakTMAO, dfwide)
+summary(aovIns)
+TukeyHSD(aovIns)
+
+# Glucose
+aovGluc<- aov(dfwide$glucose_AUC_pheno_min_NegSqrRt ~ peakTMAO, dfwide)
+summary(aovGluc)
+TukeyHSD(aovGluc)
+```
+
+
+Plot a visualization of AUC by peak TMAO group
+```{r TMAO AUC barplot}
+df_barplot <- aggregate(dfwide$AUC_TMAO_uM_min, list(dfwide$peakTMAO), FUN = mean)
+df_barplot
+
+df_barplot <- data_summary(dfwide, varname="AUC_TMAO_uM_min", 
+                    groupnames=c("peakTMAO"))
+
+peak.labs <- c("Peak at 0 min", "Peak at 30 min", "Peak at 3 hr", "Peak at 6 hr")
+names(peak.labs) <- c("peak0", "peak30", "peak180", "peak360")
+
+# Plot
+ggplot(data = df_barplot, aes(x = peakTMAO, y = AUC_TMAO_uM_min, fill = peakTMAO)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin=AUC_TMAO_uM_min-sd, ymax=AUC_TMAO_uM_min+sd), width=.2,
+                 position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  scale_fill_brewer(palette = "RdYlBu", name = "Peak Group", labels = peak.labs) + 
+  ylab(bquote("Total Area Under the Curve TMAO (" ~mu~ "M x min -1)")) + 
+  xlab(element_blank())
+
+# Save
+ggsave("../../plots/TMAO_AUC_Barbplot.jpg",
+       width = 8, 
+       height = 6, 
+       dpi = 300)
+
+```
+
+Repeat plot but with transformed variable
+```{r}
+df_barplot <- data_summary(dfwide, varname="AUC_TMAO_uM_min_ln", 
+                    groupnames=c("peakTMAO"))
+
+peak.labs <- c("Peak at 0 min", "Peak at 30 min", "Peak at 180 min", "Peak at 360 min")
+names(peak.labs) <- c("peak0", "peak30", "peak180", "peak360")
+
+# Plot
+ggplot(data = df_barplot, aes(x = peakTMAO, y = AUC_TMAO_uM_min_ln, fill = peakTMAO)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin=AUC_TMAO_uM_min_ln-sd, ymax=AUC_TMAO_uM_min_ln+sd), width=.2,
+                 position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  scale_fill_brewer(palette = "RdYlBu", name = "Peak Group", labels = peak.labs) + 
+  #ylab(bquote("Total Area Under the Curve TMAO (" ~mu~ "M x min -1)")) + 
+  xlab(element_blank())
+
+
+# Save
+#ggsave("../../plots/TMAO_AUC_Barbplot.jpg",
+#       width = 8, 
+#       height = 6, 
+#       dpi = 300)
+```
+Raw values
+```{r TMAO Insulin Glucose TG AUC barplot}
+df_barplot <- aggregate(dfwide$AUC_TMAO_uM_min, list(dfwide$peakTMAO), FUN = mean)
+df_barplot
+
+# TMAO
+df_barplot_tmao <- data_summary(dfwide, varname="AUC_TMAO_uM_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_tmao$AUCpheno <- "AUC TMAO"
+colnames(df_barplot_tmao) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# TG
+df_barplot_TG <- data_summary(dfwide, varname="triglycerides_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_TG$AUCpheno <- "AUC Triglycerides"
+colnames(df_barplot_TG) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# Glucose
+df_barplot_gluc <- data_summary(dfwide, varname="glucose_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_gluc$AUCpheno <- "AUC Glucose"
+colnames(df_barplot_gluc) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# Insulin
+df_barplot_insulin <- data_summary(dfwide, varname="insulin_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_insulin$AUCpheno <- "AUC Insulin"
+colnames(df_barplot_insulin) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# HDL
+df_barplot_hdl <- data_summary(dfwide, varname="HDL_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_hdl$AUCpheno <- "AUC HDL"
+colnames(df_barplot_hdl) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# LDL
+df_barplot_ldl <- data_summary(dfwide, varname="LDL_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_ldl$AUCpheno <- "AUC LDL"
+colnames(df_barplot_ldl) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# Total Cholesterol
+df_barplot_chol <- data_summary(dfwide, varname="chol_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_chol$AUCpheno <- "AUC Total Cholesterol"
+colnames(df_barplot_chol) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# TNFa
+df_barplot_tnfa <- data_summary(dfwide, varname="tnfa_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_tnfa$AUCpheno <- "AUC TNF-a"
+colnames(df_barplot_tnfa) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# IL6
+df_barplot_il6 <- data_summary(dfwide, varname="il6_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_il6$AUCpheno <- "AUC IL-6"
+colnames(df_barplot_il6) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# CRP
+df_barplot_crp <- data_summary(dfwide, varname="crp_AUC_pheno_min", 
+                    groupnames=c("peakTMAO"))
+df_barplot_crp$AUCpheno <- "AUC CRP"
+colnames(df_barplot_crp) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# Combine
+df_barplot_multi <- rbind(df_barplot_tmao, df_barplot_TG, df_barplot_gluc, df_barplot_insulin, df_barplot_hdl, df_barplot_ldl, df_barplot_chol) # df_barplot_tnfa, df_barplot_il6) #, df_barplot_crp)
+
+# order factors
+df_barplot_multi$AUCpheno = factor(df_barplot_multi$AUCpheno, levels=c("AUC TMAO", "AUC Glucose", "AUC Insulin", "AUC Triglycerides", "AUC HDL", "AUC LDL", "AUC Total Cholesterol"))
+
+peak.labs <- c("Peak at 0 min", "Peak at 30 min", "Peak at 180 min", "Peak at 360 min")
+names(peak.labs) <- c("peak0", "peak30", "peak180", "peak360")
+
+# Plot
+ggplot(data = df_barplot_multi, aes(x = peakTMAO, y = AUCvalue, fill = AUCpheno)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_errorbar(aes(ymin=AUCvalue-sd, ymax=AUCvalue+sd), width=.2,
+                 position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  #scale_fill_brewer(palette = "RdYlBu", name = "Peak Group", labels = peak.labs) + 
+  ylab(bquote("Total Area Under the Curve Phenotype")) + 
+  xlab(element_blank())
+
+# Plot with facet
+ggplot(data = df_barplot_multi, aes(x = peakTMAO, y = AUCvalue, fill = AUCpheno)) +
+  geom_bar(stat = "identity") +
+  facet_grid(. ~ AUCpheno) +
+  geom_errorbar(aes(ymin=AUCvalue-sd, ymax=AUCvalue+sd), width=.2,
+                 position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  scale_fill_brewer(palette = "Set2", name = "AUC Phenotype") + 
+  ylab(bquote("Total Area Under the Curve Phenotype")) + 
+  xlab(element_blank()) + 
+  theme(text=element_text(size=13),
+        axis.text.x = element_text(angle=45, hjust=1))
+
+# Save
+ggsave("../../plots/TMAO_Insulin_TG_Glucose_HDL_LDL_Chol_AUC_Facet_Barbplot.jpg",
+       width = 8, 
+       height = 5, 
+       dpi = 300)
+
+```
+
+Log Transformed values
+```{r Log TMAO Insulin Glucose TG AUC barplot}
+df_barplot <- aggregate(dfwide$AUC_TMAO_uM_min, list(dfwide$peakTMAO), FUN = mean)
+df_barplot
+
+dfwide$AUC_TMAO_uM_min_ln <- log(dfwide$AUC_TMAO_uM_min)
+dfwide$glucose_AUC_pheno_min_ln <- log(dfwide$glucose_AUC_pheno_min)
+
+# TMAO
+df_barplot_tmao <- data_summary(dfwide, varname="AUC_TMAO_uM_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_tmao$AUCpheno <- "AUC TMAO"
+colnames(df_barplot_tmao) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# TG
+df_barplot_TG <- data_summary(dfwide, varname="triglycerides_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_TG$AUCpheno <- "AUC Triglycerides"
+colnames(df_barplot_TG) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# Glucose
+df_barplot_gluc <- data_summary(dfwide, varname="glucose_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_gluc$AUCpheno <- "AUC Glucose"
+colnames(df_barplot_gluc) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# Insulin
+df_barplot_insulin <- data_summary(dfwide, varname="insulin_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_insulin$AUCpheno <- "AUC Insulin"
+colnames(df_barplot_insulin) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# HDL
+df_barplot_hdl <- data_summary(dfwide, varname="HDL_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_hdl$AUCpheno <- "AUC HDL"
+colnames(df_barplot_hdl) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# LDL
+df_barplot_ldl <- data_summary(dfwide, varname="LDL_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_ldl$AUCpheno <- "AUC LDL"
+colnames(df_barplot_ldl) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# Total Cholesterol
+df_barplot_chol <- data_summary(dfwide, varname="chol_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_chol$AUCpheno <- "AUC Total Cholesterol"
+colnames(df_barplot_chol) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# TNFa
+df_barplot_tnfa <- data_summary(dfwide, varname="tnfa_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_tnfa$AUCpheno <- "AUC TNF-a"
+colnames(df_barplot_tnfa) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# IL6
+df_barplot_il6 <- data_summary(dfwide, varname="il6_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_il6$AUCpheno <- "AUC IL-6"
+colnames(df_barplot_il6) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# CRP
+df_barplot_crp <- data_summary(dfwide, varname="crp_AUC_pheno_min_ln", 
+                    groupnames=c("peakTMAO"))
+df_barplot_crp$AUCpheno <- "AUC CRP"
+colnames(df_barplot_crp) <- c("peakTMAO", "AUCvalue", "sd", "AUCpheno")
+
+# Combine
+df_barplot_multi <- rbind(df_barplot_tmao, df_barplot_TG, df_barplot_gluc, df_barplot_insulin, df_barplot_hdl, df_barplot_ldl, df_barplot_chol) # df_barplot_tnfa, df_barplot_il6) #, df_barplot_crp)
+
+# order factors
+df_barplot_multi$AUCpheno = factor(df_barplot_multi$AUCpheno, levels=c("AUC TMAO", "AUC Glucose", "AUC Insulin", "AUC Triglycerides", "AUC HDL", "AUC LDL", "AUC Total Cholesterol"))
+
+peak.labs <- c("Peak at 0 min", "Peak at 30 min", "Peak at 180 min", "Peak at 360 min")
+names(peak.labs) <- c("peak0", "peak30", "peak180", "peak360")
+
+# Plot
+ggplot(data = df_barplot_multi, aes(x = peakTMAO, y = AUCvalue, fill = AUCpheno)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_errorbar(aes(ymin=AUCvalue-sd, ymax=AUCvalue+sd), width=.2,
+                 position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  #scale_fill_brewer(palette = "RdYlBu", name = "Peak Group", labels = peak.labs) + 
+  ylab(bquote("Total Area Under the Curve Phenotype")) + 
+  xlab(element_blank())
+
+# Plot with facet
+ggplot(data = df_barplot_multi, aes(x = peakTMAO, y = AUCvalue, fill = AUCpheno)) +
+  geom_bar(stat = "identity") +
+  facet_grid(. ~ AUCpheno) +
+  geom_errorbar(aes(ymin=AUCvalue-sd, ymax=AUCvalue+sd), width=.2,
+                 position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  scale_fill_brewer(palette = "Set2", name = "AUC Phenotype") + 
+  ylab(bquote("Total Area Under the Curve Phenotype (ln)")) + 
+  xlab(element_blank()) + 
+  theme(text=element_text(size=13),
+        axis.text.x = element_text(angle=45, hjust=1))
+
+# Save
+ggsave("../../plots/TMAO_Insulin_TG_Glucose_HDL_LDL_Chol_ln_AUC_Facet_Barbplot.jpg",
+       width = 8, 
+       height = 5, 
+       dpi = 300)
+
+```
+
+Make another factor by little exposure and more exposure to TMAO. Then repeat graphs
+
+```{r}
+dfwide$AUC_TMAO_mdn <- ifelse(dfwide$AUC_TMAO_uM_hour <= median(dfwide$AUC_TMAO_uM_hour), 0, 1)
+table(dfwide$AUC_TMAO_mdn)
+
+# TMAO
+df_barplot_tmao <- data_summary(dfwide, varname="AUC_TMAO_uM_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_tmao$AUCpheno <- "AUC TMAO"
+colnames(df_barplot_tmao) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# TG
+df_barplot_TG <- data_summary(dfwide, varname="triglycerides_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_TG$AUCpheno <- "AUC Triglycerides"
+colnames(df_barplot_TG) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# Glucose
+df_barplot_gluc <- data_summary(dfwide, varname="glucose_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_gluc$AUCpheno <- "AUC Glucose"
+colnames(df_barplot_gluc) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# Insulin
+df_barplot_insulin <- data_summary(dfwide, varname="insulin_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_insulin$AUCpheno <- "AUC Insulin"
+colnames(df_barplot_insulin) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# HDL
+df_barplot_hdl <- data_summary(dfwide, varname="HDL_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_hdl$AUCpheno <- "AUC HDL"
+colnames(df_barplot_hdl) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# LDL
+df_barplot_ldl <- data_summary(dfwide, varname="LDL_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_ldl$AUCpheno <- "AUC LDL"
+colnames(df_barplot_ldl) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# Total Cholesterol
+df_barplot_chol <- data_summary(dfwide, varname="chol_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_chol$AUCpheno <- "AUC Total Cholesterol"
+colnames(df_barplot_chol) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# TNFa
+df_barplot_tnfa <- data_summary(dfwide, varname="tnfa_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_tnfa$AUCpheno <- "AUC TNF-a"
+colnames(df_barplot_tnfa) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# IL6
+df_barplot_il6 <- data_summary(dfwide, varname="il6_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_il6$AUCpheno <- "AUC IL-6"
+colnames(df_barplot_il6) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# CRP
+df_barplot_crp <- data_summary(dfwide, varname="crp_AUC_pheno_min_ln", 
+                    groupnames=c("AUC_TMAO_mdn"))
+df_barplot_crp$AUCpheno <- "AUC CRP"
+colnames(df_barplot_crp) <- c("AUC_TMAO_mdn", "AUCvalue", "sd", "AUCpheno")
+
+# Combine
+df_barplot_multi <- rbind(df_barplot_tmao, df_barplot_TG, df_barplot_gluc, df_barplot_insulin, df_barplot_hdl, df_barplot_ldl, df_barplot_chol) # df_barplot_tnfa, df_barplot_il6) #, df_barplot_crp)
+
+# order factors
+df_barplot_multi$AUCpheno = factor(df_barplot_multi$AUCpheno, levels=c("AUC TMAO", "AUC Glucose", "AUC Insulin", "AUC Triglycerides", "AUC HDL", "AUC LDL", "AUC Total Cholesterol"))
+
+peak.labs <- c("Less than or equal to median", "Greater than median")
+names(peak.labs) <- c("Less", "Greater")
+
+# Plot
+ggplot(data = df_barplot_multi, aes(x = AUC_TMAO_mdn, y = AUCvalue, fill = AUCpheno)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_errorbar(aes(ymin=AUCvalue-sd, ymax=AUCvalue+sd), width=.2,
+                 position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  #scale_fill_brewer(palette = "RdYlBu", name = "Peak Group", labels = peak.labs) + 
+  ylab(bquote("Total Area Under the Curve Phenotype")) + 
+  xlab(element_blank())
+
+# Plot with facet
+ggplot(data = df_barplot_multi, aes(x = AUC_TMAO_mdn, y = AUCvalue, fill = AUCpheno)) +
+  geom_bar(stat = "identity") +
+  facet_grid(. ~ AUCpheno) +
+  geom_errorbar(aes(ymin=AUCvalue-sd, ymax=AUCvalue+sd), width=.2,
+                 position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  scale_fill_brewer(palette = "Set2", name = "AUC Phenotype") + 
+  ylab(bquote("Total Area Under the Curve Phenotype (ln)")) + 
+  xlab(element_blank()) + 
+  theme(text=element_text(size=13),
+        axis.text.x = element_text(angle=45, hjust=1))
+
+
+```
+
+## Fold Change 
+
+Describe TMAO levels at each time point?
+What is the greatest change in TMAO from baseline?
+
+```{r TMAO by time summary}
+summary(dfwide$TMAO.0)
+sd(dfwide$TMAO.0)
+
+summary(dfwide$TMAO.30)
+sd(dfwide$TMAO.30)
+
+summary(dfwide$TMAO.180)
+sd(dfwide$TMAO.180)
+
+summary(dfwide$TMAO.360)
+sd(dfwide$TMAO.360)
+
+# peakTMAO is 30, 180, or 360
+# take peakTMAO/fastingTMAO = change factor (factor>1)
+peak30df <- dfwide[dfwide$peakTMAO == "peak30",]
+summary(peak30df$TMAO.30 / peak30df$TMAO.0)
+sd(peak30df$TMAO.30 / peak30df$TMAO.0)
+# For individuals whose peak TMAO occurs at 30 min, the mean change is a factor of 2.06 compared to fasting
+
+peak180df <- dfwide[dfwide$peakTMAO == "peak180",]
+summary(peak180df$TMAO.180 / peak180df$TMAO.0)
+sd(peak180df$TMAO.180 / peak180df$TMAO.0)
+# For individuals whose peak TMAO occurs at 180 min, the mean change is a factor of 2.44 compared to fasting
+
+peak360df <- dfwide[dfwide$peakTMAO == "peak360",]
+summary(peak360df$TMAO.360 / peak360df$TMAO.0)
+sd(peak360df$TMAO.360 / peak360df$TMAO.0)
+# For individuals whose peak TMAO occurs at 360 min, the mean change is a factor of 2.52 compared to fasting
+
+# peakTMAO is 0
+# take peakTMAO aka fasting/360TMAO = change factor (factor<1)
+peak0df <- dfwide[dfwide$peakTMAO == "peak0",]
+summary(peak0df$TMAO.0 / peak0df$TMAO.360)
+sd(peak0df$TMAO.0 / peak0df$TMAO.360)
+# For individuals whose peak TMAO occurs at fasting, the mean change by 6 hours is a factor of 2.6 compared to fasting
+
+# What is the average change in the whole cohort?
+# For a given individual, record their maximum and minimum concentration
+# Divide them to see what factor their concentration changed by
+# Use dflong subset to people with all 4 bds
+dflong_allbd <- dflong[dflong$Subject_ID %in% dfwide$Subject_ID,]
+npeople <- unique(dflong_allbd$Subject_ID)
+npeople <- length(npeople)
+
+# Drop unused levels
+dflong_allbd$Subject_ID <- droplevels(dflong_allbd$Subject_ID)
+subjID <- as.character(unique(dflong_allbd$Subject_ID))
+
+# For results
+out_res <- list()
+# Loop
+for(i in 1:npeople){ # 97 people have all data
+  SubjectID <- subjID[i]
+  # Get 1 person
+  person_temp <- dflong_allbd[dflong_allbd$Subject_ID == SubjectID, "TMAO"]
+  # Reassign rows and cols
+  person_temp <- as.data.frame(person_temp)
+  rownames(person_temp) <- c("bd1", "bd2", "bd3", "bd4")
+  colnames(person_temp) <- "TMAO"
+  # Calculate max difference
+  foldDif <- max(person_temp$TMAO)/min(person_temp$TMAO)
+  # What BD has max value
+  BD_max <- rownames(person_temp)[which.max(person_temp$TMAO)]
+  # What BD has min value
+  BD_min <- rownames(person_temp)[which.min(person_temp$TMAO)]
+  # Combine results
+  person_res <- c(foldDif, BD_max, BD_min)
+  # Add names
+  names(person_res) <- c("FoldDif", "BDmax", "BDmin")
+  # Store results
+  out_res[[i]] <- person_res 
+}
+
+# Save results
+fold_df <- do.call(rbind, out_res)
+rownames(fold_df) <- subjID
+fold_df <- as.data.frame(fold_df)
+
+# What is the mean fold change?
+str(fold_df$FoldDif)
+fold_df$FoldDif <- as.numeric(fold_df$FoldDif)
+summary(fold_df$FoldDif, na.rm = TRUE)
+
+# Max change occurs in 8015. From what concentrations?
+dflong_allbd[dflong_allbd$Subject_ID == "8015", "TMAO"]
+
+```
+
+## Manuscript Tables
+
+```{r Table by PeakTime}
+# get cvd/other pheno data
+cvd <- read.csv("../../Data/from_FL100V2/Phenotypes_211108.csv", row.names = 1)
+
+# Subset
+cvd_keep <- c("waistavg_cm", "sysbpavgv2", "diabpavgv2","endo_rhi", "endo_ln_rhi", "endo_al", "endo_al75", "glc_bd1", "insulin_bd1", "tg_bd1", "hdl_bd1", "chol_bd1", "ldl_bd1", "hba1c_bd1", "tnfa_bd1", "il6_bd1", "il8_bd1", "il10_bd1", "crp_bd1","cystatinc_bd1", "sex", "age")
+# subset cvd data
+cvdsub <- cvd[,colnames(cvd) %in% cvd_keep]
+
+# Make backup dfwide and set rownames
+dfwide2 <- dfwide
+
+# merge with dfwide
+class_df <- merge(dfwide2, cvdsub, by = 0)
+row.names(class_df) <- class_df[,"Row.names"]
+class_df <- class_df[,-1]
+colnames(class_df)
+
+
+# TMAO table by tmao_peak
+factorVars <- c("peakTMAO")
+#vars <- c("age.x", "bmi_final", "waistavg_cm", "sysbpavgv2", "diabpavgv2", "endo_ln_rhi.x", "endo_al.x", "hdl_bd1", "ldl_bd1", "chol_bd1", "tg_bd1", "glc_bd1", "insulin_bd1", "tnfa_bd1.y", "il6_bd1", "crp_bd1", "cystatinc_bd1.y", "tmao", "choline", "betaine", "carnitine", "AUC_TMAO_uM_hour")
+vars2 <- c("age.x", "bmi_final", "AUC_TMAO_uM_hour", "TMAO.0", "glc_bd1", "insulin_bd1", "tg_bd1", "chol_bd1",  "hdl_bd1", "ldl_bd1")
+table_peakTMAO <- CreateTableOne(vars = vars2,
+                                    strata = "peakTMAO",
+                                    data = class_df,
+                                    factorVars = factorVars)
+table_peakTMAO
+
+# Dont use those p-values because the variables aren't normal. 
+# Transform to comply with normal distribution and then run stats (ANOVA)
+peakTMAOdf <- print(table_peakTMAO, quote = FALSE, noSpaces = TRUE, printToggle = FALSE)
+#write.csv(peakTMAOdf, "../../tables/characteristics_byPeakTMAO.csv")
+write.csv(peakTMAOdf, "../../tables/characteristics_byPeakTMAO_v2.csv")# used for table in poster
+```
+
+Repeat table code to focus on AUC variables for AUC-focused table
+```{r AUC Table by PeakTMAO}
+# get cvd/other pheno data
+cvd <- read.csv("../../../FL100_TMAO/data/processed/phenotype/Phenotypes_211108.csv", row.names = 1)
+cvd_keep <- c("waistavg_cm", "sysbpavgv2", "diabpavgv2","endo_rhi", "endo_ln_rhi", "endo_al", "endo_al75", "glc_bd1", "insulin_bd1", "tg_bd1", "hdl_bd1", "chol_bd1", "ldl_bd1", "hba1c_bd1", "tnfa_bd1", "il6_bd1", "il8_bd1", "il10_bd1", "crp_bd1","cystatinc_bd1", "sex", "age")
+# subset cvd data
+cvdsub <- cvd[,colnames(cvd) %in% cvd_keep]
+# Make backup dfwide and set rownames
+dfwide2 <- dfwide
+rownames(dfwide2) <- dfwide2$Subject_ID
+dfwide2 <- dfwide2[,-1]
+# merge with dfwide
+class_df <- merge(dfwide2, cvdsub, by = 0)
+row.names(class_df) <- class_df[,"Row.names"]
+class_df <- class_df[,-1]
+colnames(class_df)
+
+
+# TMAO table by tmao_peak
+factorVars <- c("peakTMAO")
+vars <- c("age.x", "bmi_final", "waistavg_cm", "sysbpavgv2", "diabpavgv2", "endo_ln_rhi.x", "endo_al.x", "hdl_bd1", "ldl_bd1", "chol_bd1", "tg_bd1", "glc_bd1", "insulin_bd1", "tnfa_bd1.y", "il6_bd1", "crp_bd1", "cystatinc_bd1.y", "tmao", "choline", "betaine", "carnitine", "AUC_TMAO_uM_min", "insulin_AUC_pheno_min", "glucose_AUC_pheno_min", "triglycerides_AUC_pheno_min")
+vars2 <- c("age.x", "bmi_final", "AUC_TMAO_uM_min", "tmao", "glc_bd1", "insulin_bd1", "tg_bd1", "chol_bd1",  "hdl_bd1", "ldl_bd1")
+vars3 <- c("age.x", "bmi_final", "AUC_TMAO_uM_min","insulin_AUC_pheno_min", "glucose_AUC_pheno_min", "triglycerides_AUC_pheno_min")
+table_peakTMAO <- CreateTableOne(vars = vars3,
+                                    strata = "peakTMAO",
+                                    data = class_df,
+                                    factorVars = factorVars)
+table_peakTMAO
+
+# Dont use those p-values because the variables aren't normal. 
+# Transform to comply with normal distribution and then run stats (ANOVA)
+peakTMAOdf <- print(table_peakTMAO, quote = FALSE, noSpaces = TRUE, printToggle = FALSE)
+write.csv(peakTMAOdf, "../../tables/AUCvars_byPeakTMAO.csv") # used for table in poster
+```
+
+
+Transform data and run anova for table.
+```{r}
+# Get functions
+RawNormSWTest <- function(x){
+    apply(x, 2, function(x) shapiro.test(x)) # no transform, raw data
+}
+
+LogNormSWTest <- function(x){
+    apply(x, 2, function(x) shapiro.test(log(x))) # natural log transform
+}
+
+# Assess tests
+RawNormSWTest(class_df[,colnames(class_df) %in% vars2]) #chol and ldl okay
+LogNormSWTest(class_df[,colnames(class_df) %in% vars2]) # good
+
+# Transform
+class_df$glc_bd1_ln <- log(class_df$glc_bd1)
+class_df$insulin_bd1_ln <- log(class_df$insulin_bd1)
+class_df$tg_bd1_ln <- log(class_df$tg_bd1)
+class_df$chol_bd1_ln <- log(class_df$chol_bd1)
+class_df$hdl_bd1_ln <- log(class_df$hdl_bd1)
+class_df$ldl_bd1_ln <- log(class_df$ldl_bd1)
+class_df$TMAO.0_ln <- log(class_df$TMAO.0)
+class_df$AUC_TMAO_uM_min_ln <- log(class_df$AUC_TMAO_uM_min)
+
+# Stats
+summary(aov(age.x ~ peakTMAO, data = class_df))
+summary(aov(bmi_final ~ peakTMAO, data = class_df))
+summary(aov(AUC_TMAO_uM_min_ln ~ peakTMAO, data = class_df))
+summary(aov(TMAO.0_ln ~ peakTMAO, data = class_df))
+summary(aov(glc_bd1_ln ~ peakTMAO, data = class_df))
+summary(aov(insulin_bd1_ln ~ peakTMAO, data = class_df))
+summary(aov(tg_bd1_ln ~ peakTMAO, data = class_df))
+summary(aov(chol_bd1_ln ~ peakTMAO, data = class_df))
+summary(aov(hdl_bd1_ln ~ peakTMAO, data = class_df))
+summary(aov(ldl_bd1_ln ~ peakTMAO, data = class_df))
+# P-values went into table for poster
+
+```
+
+
+All data by time
+```{r tmao boxplot with all data}
+p <- ggplot(data = dflong, aes(x = pp_Time_min, y = TMAO, fill = pp_Time_min)) +
+  geom_boxplot(notch = FALSE, outlier.colour = "black") +
+  geom_jitter(alpha = 0.4) +
+  xlab("Time") + 
+  ylab(bquote("Ln of TMAO (" ~mu~ "M)")) +
+  scale_y_continuous(trans='log2') +
+  scale_x_discrete(labels = c("0 min", "30 min", "3 hrs", "6 hrs")) +
+  theme_bw() +
+  theme(axis.title=element_text(size=14),
+        axis.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.text=element_text(size=12)) + 
+  stat_compare_means(comparisons = list(c("0","30"), c("0", "180"), c("0","360"), c("30", "180"), c("30","360"), c("180","360")), 
+  label = "p.format", method = "wilcox.test", paired=F) +
+  scale_fill_brewer(palette = "RdYlBu", 
+                    name = "Time (min)", 
+                    labels = c("0 min", "30 min", "3 hrs", "6 hrs"))  #Spectral
+  #ylim(0,75)
+p
+
+ggsave("../../plots/TMAOxTime_Boxplot_lnYaxis_v5_nobreaks.jpg",
+       width = 8, 
+       height = 9, 
+       dpi = 300) # Used in poster
+
+p + scale_y_break(breaks=c(45,70),scales="fixed")
+#ggsave("../../plots/TMAOxTime_Boxplot.jpg") # Used in poster
+ggsave("../../plots/TMAOxTime_Boxplot_lnYaxis_v4.jpg",
+       width = 8, 
+       height = 9, 
+       dpi = 300) # Used in poster
+
+# Not scaled y
+p <- ggplot(data = dflong, aes(x = pp_Time_min, y = TMAO, fill = pp_Time_min)) +
+  geom_boxplot(notch = FALSE, outlier.colour = "red") +
+  geom_jitter(alpha = 0.4) +
+  xlab("Time (min)") + 
+  ylab(bquote("TMAO (" ~mu~ "M)")) +
+  #scale_y_continuous(trans='log2') +
+  theme(text=element_text(size=13)) + 
+  theme_light() +
+  stat_compare_means(comparisons = list(c("0","30"), c("0", "180"), c("0","360"), c("30", "180"), c("30","360"), c("180","360")), 
+  label = "p.format", method = "wilcox.test", paired=F) +
+  scale_fill_brewer(palette = "RdYlBu", name = "Time (min)") #Spectral
+  #ylim(0,75)
+p
+p + scale_y_break(breaks=c(45,70),scales="fixed")
+#ggsave("../../plots/TMAOxTime_Boxplot.jpg") # Used in poster
+ggsave("../../plots/TMAOxTime_Boxplot_raw.jpg",
+       width = 8, 
+       height = 9, 
+       dpi = 300) # Used in poster
+
+```
+Make in only 97 ppl with all blood draws
+
+```{r TMAOxTime plot}
+wide_ID <- row.names(dfwide)
+dflong_sub <- dflong[dflong$Subject_ID %in% wide_ID,]
+  
+p <- ggplot(data = dflong_sub, aes(x = pp_Time_min, y = TMAO, fill = pp_Time_min)) +
+  geom_boxplot(notch = FALSE, outlier.colour = "black") +
+  geom_jitter(alpha = 0.4, position = position_jitter(width = .2)) +
+  xlab("Time") + 
+  ylab(bquote("Ln of TMAO (" ~mu~ "M )")) +
+  scale_y_continuous(trans='log2') +
+  scale_x_discrete(labels = c("0 min", "30 min", "3 hrs", "6 hrs")) +
+  theme_bw() +
+  theme(axis.title=element_text(size=14),
+        axis.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.text=element_text(size=12)) + 
+  stat_compare_means(label = "p.format", method = "anova", paired=F) +
+  scale_fill_brewer(palette = "RdYlBu", 
+                    name = "Time", 
+                    labels = c("0 min", "30 min", "3 hrs", "6 hrs"))  #Spectral
+  #ylim(0,75)
+p
+
+ggsave("../../plots/TMAOxTime_Boxplot_anovaP.jpg",
+       width = 8, 
+       height = 8, 
+       dpi = 400)
+```
+
+
+
+Plot the TMAO data by time
+```{r Plotting faceted by peak group}
+dfwide2 <- dfwide
+dfwide2$Subject_ID <- row.names(dfwide2)
+
+# Make a wide form for plotting
+tmao_wide <- tidyr::pivot_longer(data = dfwide2,
+                                 cols = c(1:4),
+                                 names_to = "TMAO_timepoint",
+                                 values_to = "TMAO_byTime")
+
+tmao_wide$timepoint_min <- tmao_wide$TMAO_timepoint
+tmao_wide$timepoint_min <- gsub("TMAO.", "", tmao_wide$timepoint_min)
+tmao_wide$timepoint_min <- factor(tmao_wide$timepoint_min, levels = c("0", "30", "180", "360"))
+str(tmao_wide$timepoint_min)
+
+#peak.labs <- c("Peak at 0 min", "Peak at 30 min", "Peak at 180 min", "Peak at 360 min")
+peak.labs <- c("Peak at 0 min", "Peak at 30 min", "Peak at 3 hrs", "Peak at 6 hrs")
+names(peak.labs) <- c("peak0", "peak30", "peak180", "peak360")
+
+p <- ggplot(tmao_wide, aes(x=timepoint_min, y=TMAO_byTime, group = Subject_ID)) +
+  geom_line(alpha=0.4) + 
+  geom_point() +
+  stat_summary(aes(group = 1), geom = "point", fun = mean,
+    shape = 17, size = 3, color = "blue")+
+  #scale_y_log10()+
+  #facet_grid(slope_sign_180_360~slope_sign_30_180~slope_sign_0_30) +
+  facet_grid(peakTMAO ~ ., labeller = labeller(peakTMAO = peak.labs)) +
+  xlab("Time (min)") +
+  ylab(bquote("TMAO" ~mu~ "M")) +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  scale_fill_brewer(palette = "RdYlBu") +
+  ylim(0,30)
+
+p
+
+ggsave("../../plots/TMAOxTime_facet_PeakResponse.jpg",
+       width = 8, 
+       height = 7, 
+       dpi = 300)
+
+
+# Tweak design for design effects
+p <- ggplot(tmao_wide, aes(x=timepoint_min, y=TMAO_byTime, group = Subject_ID, color = peakTMAO)) +
+ # geom_rect(alpha=0.2, aes(fill = peakTMAO), xmin = -Inf,xmax = Inf,ymin = -Inf, ymax = Inf) +
+  geom_line(alpha=0.4) + 
+  geom_point() +
+  stat_summary(aes(group = 1), geom = "point", fun = mean,
+    shape = 17, size = 3, color = "blue")+
+  facet_grid(peakTMAO ~ ., labeller = labeller(peakTMAO = peak.labs)) +
+  xlab("Time") +
+  ylab(bquote("TMAO" ~mu~ "M")) +
+  theme_bw() +
+  theme(axis.title=element_text(size=14),
+        axis.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.text=element_text(size=12)) + 
+  #theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  scale_color_brewer(palette = "RdYlBu") +
+  ylim(0,30)
+
+p
+
+ggsave("../../plots/TMAOxTime_facet_PeakResponse_withColors.jpg", 
+       width = 8, 
+       height = 7, 
+       dpi = 300) 
+
+# Tweak x-axis to reflect accurate time
+plotData <- tmao_wide
+plotData$timepoint_min <- as.numeric(levels(plotData$timepoint_min))[plotData$timepoint_min]
+str(plotData$timepoint_min)
+str(plotData$peakTMAO)
+plotData$peakTMAO <- factor(plotData$peakTMAO, levels=c("peak0", "peak30", "peak180", "peak360"))
+time_labels <- c("0 min", "30 min", "3 hr", "6 hr")
+
+p <- ggplot(plotData, aes(x=timepoint_min, y=TMAO_byTime, group = Subject_ID, color = peakTMAO)) +
+ # geom_rect(alpha=0.2, aes(fill = peakTMAO), xmin = -Inf,xmax = Inf,ymin = -Inf, ymax = Inf) +
+  geom_line(alpha=0.4) + 
+  geom_point() +
+  stat_summary(aes(group = 1), geom = "point", fun = mean,
+    shape = 17, size = 3, color = "blue")+
+  #facet_grid(peakTMAO ~ ., labeller = labeller(peakTMAO = peak.labs)) +
+  facet_wrap(peakTMAO ~ ., labeller = labeller(peakTMAO = peak.labs), nrow = 2) +
+  xlab("Time (min)") +
+  ylab(bquote("TMAO (" ~mu~ "M )")) +
+  theme_bw() +
+  theme(axis.title=element_text(size=14),
+        axis.text=element_text(size=12),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.title=element_text(size=14),
+        legend.text=element_text(size=12)) + 
+  #scale_color_brewer(palette = "RdYlBu") +
+  scale_color_brewer(palette = "RdYlBu", name = "Peak TMAO Group", labels = c("Peak at 0 min", "Peak at 30 min", "Peak at 3 hrs", "Peak at 6 hrs")) +
+  ylim(0,30) +
+  scale_x_continuous(breaks = c(0,30,180,360), labels = time_labels) 
+
+p
+
+ggsave("../../plots/TMAOxTime_facet_PeakResponse_withColors_correctTimeScale_v3.jpg", 
+       width = 12, 
+       height = 7, 
+       dpi = 300) # Used in poster
+```
+
+
+```{r Line graph by response type}
+# Means
+# Make a graph with just 4 lines representing mean and with sd bars
+tmao0 <- aggregate(dfwide$TMAO.0, list(dfwide$peakTMAO), FUN = mean)
+rownames(tmao0) <- tmao0[,1]
+tmao0 <- tmao0[,-1,FALSE]
+tmao0$PeakTMAOgroup <- "Peak0Grp" 
+tmao0$time <- rownames(tmao0)
+tmao0$time <- gsub("peak", "", tmao0$time)
+
+tmao30 <- aggregate(dfwide$TMAO.30, list(dfwide$peakTMAO), FUN = mean)
+rownames(tmao30) <- tmao30[,1]
+tmao30 <- tmao30[,-1,FALSE]
+tmao30$PeakTMAOgroup <- "Peak30Grp" 
+tmao30$time <- rownames(tmao30)
+tmao30$time <- gsub("peak", "", tmao30$time)
+
+tmao180 <- aggregate(dfwide$TMAO.180, list(dfwide$peakTMAO), FUN = mean)
+rownames(tmao180) <- tmao180[,1]
+tmao180 <- tmao180[,-1,FALSE]
+tmao180$PeakTMAOgroup <- "Peak180Grp" 
+tmao180$time <- rownames(tmao180)
+tmao180$time <- gsub("peak", "", tmao180$time)
+
+tmao360 <- aggregate(dfwide$TMAO.360, list(dfwide$peakTMAO), FUN = mean)
+rownames(tmao360) <- tmao360[,1]
+tmao360 <- tmao360[,-1,FALSE]
+tmao360$PeakTMAOgroup <- "Peak360Grp" 
+tmao360$time <- rownames(tmao360)
+tmao360$time <- gsub("peak", "", tmao360$time)
+
+# Standard Deviations
+tmao0sd <- aggregate(dfwide$TMAO.0, list(dfwide$peakTMAO), FUN = sd)
+rownames(tmao0sd) <- tmao0sd[,1]
+tmao0sd <- tmao0sd[,-1,FALSE]
+colnames(tmao0sd) <- "sd" 
+
+tmao30sd <- aggregate(dfwide$TMAO.30, list(dfwide$peakTMAO), FUN = sd)
+rownames(tmao30sd) <- tmao30sd[,1]
+tmao30sd <- tmao30sd[,-1,FALSE]
+colnames(tmao30sd) <- "sd" 
+
+tmao180sd <- aggregate(dfwide$TMAO.180, list(dfwide$peakTMAO), FUN = sd)
+rownames(tmao180sd) <- tmao180sd[,1]
+tmao180sd <- tmao180sd[,-1,FALSE]
+colnames(tmao180sd) <- "sd" 
+
+tmao360sd <- aggregate(dfwide$TMAO.360, list(dfwide$peakTMAO), FUN = sd)
+rownames(tmao360sd) <- tmao360sd[,1]
+tmao360sd <- tmao360sd[,-1,FALSE]
+colnames(tmao360sd) <- "sd" 
+
+# Combine mean and sd
+tmao0 <- merge(tmao0, tmao0sd, by = 0)
+tmao30 <- merge(tmao30, tmao30sd, by = 0)
+tmao180 <- merge(tmao180, tmao180sd, by = 0)
+tmao360 <- merge(tmao360, tmao360sd, by = 0)
+
+# Combine and format
+tmaoAll <- rbind(tmao0, tmao30, tmao180, tmao360)
+colnames(tmaoAll) <- c("Row.names","TMAOmean", "PeakTMAOgroup", "Time", "StandardDeviation")
+# Set levels
+#tmaoAll$Time <- factor(tmaoAll$Time, levels = c("0", "30", "180", "360"))
+tmaoAll$Time <- as.numeric(tmaoAll$Time)
+tmaoAll$PeakTMAOgroup <- factor(tmaoAll$PeakTMAOgroup, levels = c("Peak0Grp", "Peak30Grp", "Peak180Grp", "Peak360Grp"))
+
+p <- ggplot(tmaoAll, aes(x=Time, y=TMAOmean, group = PeakTMAOgroup, colour = PeakTMAOgroup)) +
+  geom_line(alpha=0.8, size = 1.5) + 
+  #geom_point() +
+  #stat_summary(aes(group = 1), geom = "point", fun = mean,
+  #  shape = 17, size = 3, color = "blue")+
+  #scale_y_log10()+
+  #facet_grid(slope_sign_180_360~slope_sign_30_180~slope_sign_0_30) +
+  #facet_grid(peakTMAO ~ ., labeller = labeller(peakTMAO = peak.labs)) +
+  xlab("Time (min)") +
+  ylab(bquote("TMAO" ~mu~ "M")) +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  theme(legend.position = c(0.15, 0.8)) +
+  ylim(0,25) + 
+  geom_errorbar( aes(x=Time, ymin=TMAOmean-StandardDeviation, ymax=TMAOmean+StandardDeviation), width=0.2, alpha=0.5, size=.5) + 
+  scale_color_brewer(palette = "RdYlBu", name = "Peak TMAO Group", labels = c("Peak at 0 min", "Peak at 30 min", "Peak at 180 min", "Peak at 360 min")) 
+
+p
+
+ggsave("../../plots/TMAOxTime_by_PeakResponse_4lines_correctTimeScale.jpg",
+       width = 8, 
+       height = 6, 
+       dpi = 300) # used in poster
+```
+
+Is TMAO different per time point per response type?
+```{r}
+# TMAO table by tmao_tertile - females
+factorVars <- c("peakTMAO")
+vars <- c("TMAO.0", "TMAO.30", "TMAO.180", "TMAO.360")
+#vars2 <- c("age.x", "bmi_final", "AUC_TMAO_uM_min", "tmao", "glc_bd1", "insulin_bd1", "tg_bd1", "chol_bd1",  "hdl_bd1", "ldl_bd1")
+table_peakTMAO2 <- CreateTableOne(vars = vars,
+                                    strata = "peakTMAO",
+                                    data = dfwide,
+                                    factorVars = factorVars)
+table_peakTMAO2
+
+# Dont use those p-values because the variables aren't normal. 
+# Transform to comply with normal distribution and then run stats (ANOVA)
+peakTMAOdf2 <- print(table_peakTMAO2, quote = FALSE, noSpaces = TRUE, printToggle = FALSE)
+write.csv(peakTMAOdf2, "../../tables/characteristics_byPeakTMAO_tmaoOnly.csv") # used for table in poster
+
+# Tukeys
+# 0 m
+res_peak <- aov(dfwide$TMAO.0 ~ dfwide$peakTMAO)
+summary(res_peak)
+TukeyHSD(res_peak)
+# 30 m
+res_peak <- aov(dfwide$TMAO.30 ~ dfwide$peakTMAO)
+summary(res_peak)
+TukeyHSD(res_peak)
+# 180 m
+res_peak <- aov(dfwide$TMAO.180 ~ dfwide$peakTMAO)
+summary(res_peak)
+TukeyHSD(res_peak)
+# 360 m
+res_peak <- aov(dfwide$TMAO.360 ~ dfwide$peakTMAO)
+summary(res_peak)
+TukeyHSD(res_peak)
+
+# stats went into the poster
+```
+
+Take a look at AUC and peakTMAO
+```{r AUC all metab}
+AUCdf <- readRDS("../../Data/Processed/Biocrates_AreaUnderCurve_AllMetabolites.rds")
+extra <- subset(dfwide, select = c(sex, age, bmi_final, peakTMAO))
+# Merge
+AUCdf2 <- merge(extra, AUCdf, by = 0, all.x = TRUE, all.y = FALSE)
+rownames(AUCdf2) <- AUCdf2[,"Row.names"]
+AUCdf2 <- AUCdf2[,-1]
+```
+
+```{r}
+group <- AUCdf2$peakTMAO
+res.aov <- list()
+for(i in 5:ncol(AUCdf2)){
+  column <- names(AUCdf2[i])
+  #tidy will summarise and return neat format
+  avz <- broom::tidy(aov(AUCdf2[,i] ~ group, data = AUCdf2))
+  # Add this condition if you only want aov with P < 0.05 printed
+  if(avz$p.value[1] < 0.05) {
+    print(column)
+    print(avz)
+    res.aov[[i]] <- column
+ }
+}
+res.aov <- do.call(rbind, res.aov)
+res.aov
+# Test these + TPH
+
+```
+Plot res
+```{r}
+df_barplot <- aggregate(AUCdf2$`lysoPC_a_C26:1`, list(AUCdf2$peakTMAO), FUN = mean)
+df_barplot
+
+#df_barplot <- data_summary(AUCdf2, varname="", 
+#                    groupnames=c("peakTMAO"))
+
+peak.labs <- c("Peak at 0 min", "Peak at 30 min", "Peak at 180 min", "Peak at 360 min")
+names(peak.labs) <- c("peak0", "peak30", "peak180", "peak360")
+
+# Plot
+ggplot(data = df_barplot, aes(x = Group.1, y = x, fill = Group.1)) +
+  geom_bar(stat = "identity") +
+  #geom_errorbar(aes(ymin=AUC_TMAO_uM_min-sd, ymax=AUC_TMAO_uM_min+sd), width=.2,
+  #               position=position_dodge(.9)) + 
+  theme_light() + 
+  theme(text=element_text(size=13)) +
+  scale_fill_brewer(palette = "RdYlBu", name = "Peak Group", labels = peak.labs) + 
+  ylab(bquote("Total Area Under the Curve Metabolite")) + 
+  xlab(element_blank())
+
+keep <- c(res.aov, "peakTMAO")
+resAUC <- AUCdf2[,colnames(AUCdf2) %in% keep]
+names_keep <- colnames(resAUC[,-1])
+names_keep
+  
+for(i in names_keep){
+  # Name plots
+  legend_title <- i
+  # Get data
+  df_barplot <- aggregate(resAUC[,i], list(resAUC$peakTMAO), FUN = mean)
+  # Plot
+  temp_plot <- ggplot(df_barplot, aes(x = Group.1,
+                      y = x,
+                      fill = Group.1)) +
+  geom_bar(stat = "identity") +
+  #facet_wrap(~sex) +
+  scale_fill_brewer(legend_title, palette = "Set2") + #values=c("#2D708EFF", "#B8DE29FF", "#DCE319FF")) +
+  xlab("Peak TMAO Group") +
+  ylab(paste0("Metabolite ", i)) +
+  geom_jitter() +
+  theme_light() +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(family = "Arial",
+                      colour = "black")) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 10),
+        axis.title.y=element_text(size=11,
+                     colour = "black"),
+        axis.text.y=element_text(size=10,
+                      colour = "black")) 
+# Deal with : and / in names that will mess up saving data
+  j <- i 
+  j <- gsub("/", ".", j)
+  j <- gsub(":", "_", j)
+  ggsave(temp_plot, file=paste0("../../plots/AUC_barplots/AUC_byPeakTMAOgroup_barplot_", j,".png"), width = 14, height = 10, units = "cm")
+  
+}
+```
+
+Show if TMAO is different by time point
+```{r TM}
+shapiro.test(log(dflong$TMAO))
+aov_time <- aov(log(dflong$TMAO) ~ dflong$pp_Time_min)
+summary(aov_time)
+TukeyHSD(aov_time)
+
+```
+
+
+### Old Plotting Code 
+
+Correlate TMAO with phosphatidylcholines
+
+For correlations, do my variables need to be normal? Here is an interesting thread, https://stats.stackexchange.com/questions/3730/pearsons-or-spearmans-correlation-with-non-normal-data. Spearman's rho is rank based and non-parametric so without checking every distribution, is a good way to go. We do need to correct for multiple comparisons. 
+
+Note, we do not use this code but the correlation code presented earlier using corr.test(). We keep this code in case we want to impliment this type of plot to show our results. 
+
+```{r TMAO Biocrates Correlations}
+#library(corrr)
+bio5 <- dflong
+# By time
+bio_bd1 <- bio5[bio5$pp_Time_min == 0,]
+bio_bd2 <- bio5[bio5$pp_Time_min == 30,]
+bio_bd3 <- bio5[bio5$pp_Time_min == 180,]
+bio_bd4 <- bio5[bio5$pp_Time_min == 360,]
+
+# Set row names
+# Now set row names to subject ID
+rownames(bio_bd1) <- bio_bd1[,"Subject_ID"]
+rownames(bio_bd2) <- bio_bd2[,"Subject_ID"]
+rownames(bio_bd3) <- bio_bd3[,"Subject_ID"]
+rownames(bio_bd4) <- bio_bd4[,"Subject_ID"]
+
+# Append time to col
+colnames(bio_bd1) <- paste0(colnames(bio_bd1), "_bd1")
+colnames(bio_bd2) <- paste0(colnames(bio_bd2), "_bd2")
+colnames(bio_bd3) <- paste0(colnames(bio_bd3), "_bd3")
+colnames(bio_bd4) <- paste0(colnames(bio_bd4), "_bd4")
+
+# Correlate TMAO with all other metabolites
+# BD1
+colnames(bio_bd1)
+b=apply(bio_bd1[,9:591],2,function(x){
+  cor.test(bio_bd1[,"TMAO_bd1"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.value")
+head(p.val)  
+r.cor <- sapply(b,"[[","estimate")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+tmao_cor_bd1 <- pr
+tmao_cor_bd1
+#Save
+#write.csv(tmao_cor_bd1, "../tables/manuscript_1.3/biocCorr/TMAO_correlations_BHcorrection_BD1_210809.csv")
+
+# BD2
+colnames(bio_bd2)
+str(bio_bd2$bd_time)
+b=apply(bio_bd2[,9:591],2,function(x){
+  cor.test(bio_bd2[,"TMAO_bd2"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.value")
+head(p.val)  
+r.cor <- sapply(b,"[[","estimate")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+tmao_cor_bd2 <- pr
+#Save
+#write.csv(tmao_cor_bd2, "../tables/manuscript_1.3/biocCorr/TMAO_correlations_BHcorrection_BD2_210809.csv")
+
+# BD3
+colnames(bio_bd3)
+b=apply(bio_bd3[,9:591],2,function(x){
+  cor.test(bio_bd3[,"TMAO_bd3"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.value")
+head(p.val)  
+r.cor <- sapply(b,"[[","estimate")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+tmao_cor_bd3 <- pr
+#Save
+#write.csv(tmao_cor_bd3, "../tables/manuscript_1.3/biocCorr/TMAO_correlations_BHcorrection_BD3_210809.csv")
+
+# BD4
+colnames(bio_bd4)
+b=apply(bio_bd4[,9:591],2,function(x){
+  cor.test(bio_bd4[,"TMAO_bd4"],x,method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.value")
+head(p.val)  
+r.cor <- sapply(b,"[[","estimate")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+tmao_cor_bd4 <- pr
+#Save
+#write.csv(tmao_cor_bd4, "../tables/manuscript_1.3/biocCorr/TMAO_correlations_BHcorrection_BD4_210809.csv")
+
+# Find highly associated candidates
+# Are they significantly associated in each BD?
+sig_bd1 <- tmao_cor_bd1[tmao_cor_bd1$p.val < 0.05,]
+rownames(sig_bd2) <- gsub("_bd1", "", rownames(sig_bd2))
+sig_bd1 <- rownames(sig_bd1)
+
+sig_bd2 <- tmao_cor_bd2[tmao_cor_bd2$p.val < 0.05,]
+rownames(sig_bd2) <- gsub("_bd2", "", rownames(sig_bd2))
+sig_bd2 <- rownames(sig_bd2)
+
+sig_bd3 <- tmao_cor_bd3[tmao_cor_bd3$p.val < 0.05,]
+rownames(sig_bd3) <- gsub("_bd3", "", rownames(sig_bd3))
+sig_bd3 <- rownames(sig_bd3)
+
+sig_bd4 <- tmao_cor_bd4[tmao_cor_bd4$p.val < 0.05,]
+rownames(sig_bd4) <- gsub("_bd4", "", rownames(sig_bd4))
+sig_bd4 <- rownames(sig_bd4)
+
+sig_bd1[sig_bd1 %in% sig_bd2] 
+sig_bd1[sig_bd1 %in% sig_bd3]
+sig_bd1[sig_bd1 %in% sig_bd4] # bd1 doesn't look like any other bd, so fasting doesn't look like postprandial
+sig_bd1[sig_bd2 %in% sig_bd3]
+sig_bd1[sig_bd2 %in% sig_bd4]
+sig_bd1[sig_bd3 %in% sig_bd4]
+
+# Plot
+# Rank the top 20 most significant metabolites
+#rownames(tmao_cor_bd2) <- gsub("_bd2", "", rownames(tmao_cor_bd2))
+#rownames(tmao_cor_bd3) <- gsub("_bd3", "", rownames(tmao_cor_bd3))
+#rownames(tmao_cor_bd4) <- gsub("_bd4", "", rownames(tmao_cor_bd4))
+# BD1
+temp_bd1 <- tmao_cor_bd1[order(tmao_cor_bd1$p.val, decreasing = FALSE),] # order from greatest to least
+temp_bd1_top20 <- temp_bd1[1:20,] # select the top 20
+# BD2
+temp_bd2 <- tmao_cor_bd2[order(tmao_cor_bd2$p.val, decreasing = FALSE),] # order from greatest to least
+temp_bd2_top20 <- temp_bd2[1:20,] # select the top 20
+# BD3
+temp_bd3 <- tmao_cor_bd3[order(tmao_cor_bd3$p.val, decreasing = FALSE),] # order from greatest to least
+temp_bd3_top20 <- temp_bd3[1:20,] # select the top 20
+# BD4
+temp_bd4 <- tmao_cor_bd4[order(tmao_cor_bd4$p.val, decreasing = FALSE),] # order from greatest to least
+temp_bd4_top20 <- temp_bd4[1:20,] # select the top 20
+
+# Remove "_bdX"
+rownames(temp_bd1_top20) <- gsub("_bd1", "", rownames(temp_bd1_top20))
+rownames(temp_bd2_top20) <- gsub("_bd2", "", rownames(temp_bd2_top20))
+rownames(temp_bd3_top20) <- gsub("_bd3", "", rownames(temp_bd3_top20))
+rownames(temp_bd4_top20) <- gsub("_bd4", "", rownames(temp_bd4_top20))
+
+# Get a list of the top 20 from every BD
+top1 <- rownames(temp_bd1_top20)
+top2 <- rownames(temp_bd2_top20)
+top3 <- rownames(temp_bd3_top20)
+top4 <- rownames(temp_bd4_top20)
+# Combine
+top <- c(top1, top2, top3, top4)
+top_u <- unique(top)
+
+# Make back ups
+bu1 <- tmao_cor_bd1
+bu2 <- tmao_cor_bd2
+bu3 <- tmao_cor_bd3
+bu4 <- tmao_cor_bd4
+# Remove "_bdX"
+rownames(bu1) <- gsub("_bd1", "", rownames(bu1))
+rownames(bu2) <- gsub("_bd2", "", rownames(bu2))
+rownames(bu3) <- gsub("_bd3", "", rownames(bu3))
+rownames(bu4) <- gsub("_bd4", "", rownames(bu4))
+
+bu1$metabolite <- rownames(bu1)
+bu2$metabolite <- rownames(bu2)
+bu3$metabolite <- rownames(bu3)
+bu4$metabolite <- rownames(bu4)
+
+bu1$blooddraw <- "0 min"
+bu2$blooddraw <- "30 min"
+bu3$blooddraw <- "180 min"
+bu4$blooddraw <- "360 min"
+
+# Add stars
+bu1$stars <- cut(bu1$p.val,
+                       breaks=c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+                       label=c("***", "**", "*", "."," "))
+bu2$stars <- cut(bu2$p.val,
+                       breaks=c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+                       label=c("***", "**", "*", "."," "))
+bu3$stars <- cut(bu3$p.val,
+                       breaks=c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+                       label=c("***", "**", "*", "."," "))
+bu4$stars <- cut(bu4$p.val,
+                       breaks=c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+                       label=c("***", "**", "*", "."," "))
+
+# Left join
+#test <- left_join(bu1, bu2, by=c("metabolite"="metabolite")) # Not what I want
+test <- rbind(bu1, bu2, bu3, bu4)
+test <- test[test$metabolite %in% top_u,]
+# Revalue
+test$blooddraw <- factor(test$blooddraw, levels = c("0 min", "30 min", "180 min", "360 min"))
+# Remove TMAO
+test2 <- test
+test2 <- subset(test2, test2$metabolite != "TMAO")
+p = ggplot(test2, aes(x=blooddraw, y=metabolite)) + 
+  geom_tile(aes(fill=r.cor), colour = "black") +
+  xlab("") + ylab("") +
+  theme(text=element_text(size=10)) +
+  scale_fill_gradient2(low="#2C7BB6",
+                       mid="white",
+                       high="#D7191C") +
+  labs(fill = "Correlation to\n TMAO") +
+  geom_text(aes(label=stars), color="black", size=3)
+
+p
+
+# Save!
+ggsave(paste0("../../plots/biocrates_TMAOCorrelation_BD1-4_plotStars.jpeg"), p, 
+       width = 6, 
+       height = 8, 
+       dpi = 300)
+
+```
+
