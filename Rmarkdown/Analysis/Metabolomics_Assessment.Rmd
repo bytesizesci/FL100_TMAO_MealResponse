@@ -1,0 +1,573 @@
+---
+title: "Phosphatidylcholine Exploration"
+author: "Kristen James"
+date: "2022-09-13"
+output: html_document
+---
+
+Could the phosphatidylcholines be providing a TMAO-precursor in response to digestion?
+
+9/13/22 - One way to address this, ask if the metabolites are differentially present by peak-TMAO group at each blood draw
+
+10/11/22 - Lets look at the sum of the phosphatidylcholines. Do those differ by peak-TMAO group?
+
+```{r libraries}
+library(dplyr)
+```
+
+
+```{r}
+# Clear environment to start fresh (if necessary)
+rm(list = ls())
+
+# Data from TMAO_Meal_Response_Focused.rmd
+#dfwide <- readRDS("../../Data/Processed/dfwide_metavariables_n97_inflam.rds")
+
+# Long data
+dflong <- readRDS("../../Data/Processed/Biocrates_long_meta.rds")
+
+dflong$pp_Time_min <- factor(dflong$pp_Time_min, levels = c("0", "30", "180", "360"))
+
+#BMI
+dflong$bmi_bin <- dflong$bin_number
+dflong$bmi_bin <- gsub("..","", dflong$bmi_bin)
+#Age
+dflong$age_bin <- dflong$bin_number
+dflong$age_bin <- gsub("^.","", dflong$age_bin)
+dflong$age_bin <- gsub(".$","", dflong$age_bin)
+#Sex
+dflong$sex_bin <- dflong$bin_number
+dflong$sex_bin <- gsub("..$","", dflong$sex_bin)
+
+# Put age and sex at beginning
+dflong <- dflong %>% select(c(age, sex), everything())
+colnames(dflong)
+# Cut non-metabolite out from end
+dflong <- dflong[,1:593]
+# Make sex 0 or 1
+dflong$sex <- ifelse(dflong$sex == 1, 0, 1) # before 1=male,2=female. After 0=male, 1=female
+table(dflong$sex)
+
+# Wide data
+dfwide <- readRDS("../../Data/Processed/Biocrates_AreaUnderCurve_meta.rds")
+rownames(dfwide) <- dfwide[,"Subject_ID"]
+# peak TMAO classification
+dfwide$peakTMAO <- ifelse(dfwide$TMAO.0 >= dfwide$TMAO.30 & 
+                            dfwide$TMAO.0 >= dfwide$TMAO.180 & 
+                              dfwide$TMAO.0 >= dfwide$TMAO.360, "peak0",
+                          ifelse(dfwide$TMAO.30 >= dfwide$TMAO.0 &
+                                   dfwide$TMAO.30 >= dfwide$TMAO.180 &
+                                    dfwide$TMAO.30 >= dfwide$TMAO.360, "peak30", 
+                                 ifelse(dfwide$TMAO.180 >= dfwide$TMAO.0 &
+                                          dfwide$TMAO.180 >= dfwide$TMAO.30 &
+                                            dfwide$TMAO.180 >= dfwide$TMAO.360, "peak180", "peak360")))
+
+# Set levels
+dfwide$peakTMAO <- factor(dfwide$peakTMAO, levels = c("peak0", "peak30", "peak180", "peak360"))
+# Distribution of ppl by peak TMAO concentration
+table(dfwide$peakTMAO)
+
+# get list of ids by peakTMAO group
+peakTMAO <- dfwide[,c("peakTMAO"),drop=FALSE]
+
+# Add list to dflong
+dflong <- merge(peakTMAO, dflong, by.x = 0, by.y = "Subject_ID", all.y = TRUE)
+
+# Only keep IDs in peakTMAO
+dflongPk <- dflong[dflong$Row.names %in% rownames(peakTMAO),]
+
+colnames(dflongPk)
+
+# Make blood draw numeric and showing the right relationships with regard to time
+dflongPk2 <- dflongPk
+dflongPk2$time_numeric <- ifelse(dflongPk2$Blood_Draw == "BD1", 0,
+                              ifelse(dflongPk2$Blood_Draw == "BD2", 30,
+                                     ifelse(dflongPk2$Blood_Draw == "BD3", 180, 360)))
+```
+
+Is the metabolite different by peakTMAO group?
+- Get a blood draw
+- Get a metabolite
+- Run the stats
+- Organize the answer
+- Repeat
+
+Note the chunk below in *interactive*. You can't just hit the green arrow!
+
+```{r}
+# Name blood draw
+# BD1
+bd1 <- dflongPk[dflongPk$Blood_Draw == "BD1",]
+bd2 <- dflongPk[dflongPk$Blood_Draw == "BD2",]
+bd3 <- dflongPk[dflongPk$Blood_Draw == "BD3",]
+bd4 <- dflongPk[dflongPk$Blood_Draw == "BD4",]
+
+# Set limits
+n_metabolites <- ncol(dflongPk[,12:594])
+
+# Now run... some steps need to be changed to specify bd. Look for comments below indicating places to change accordingly
+# Change here with BD
+metabolite <- bd1[,12:594]
+metabolite <- bd2[,12:594]
+metabolite <- bd3[,12:594]
+metabolite <- bd4[,12:594]
+
+# Check
+str(dflongPk$sex)
+str(dflongPk$age)
+str(dflongPk$peakTMAO)
+
+# Linear model
+my_lm <- lapply(1:n_metabolites, function(x) lm(metabolite[,x] ~ peakTMAO + sex*age, bd2 )) # change bd with correct iteration
+
+# Get statistics
+my_lm_adj.r.squared <- sapply(my_lm, function(x){summary(x)$adj.r.squared})
+my_lm_estimate <- sapply(my_lm, function(x){summary(x)$coefficients[2,1]}) # [food row, estimate] corresponds to food B 
+my_lm_std.error <- sapply(my_lm, function(x){summary(x)$coefficients[2,2]}) # [food row, Std.Error] corresponds to food Std. Error 
+my_lm_T.value <- sapply(my_lm, function(x){summary(x)$coefficients[2,3]}) # [food row, T value] corresponds to food t value
+my_lm_P.value <- sapply(my_lm, function(x){summary(x)$coefficients[2,4]}) # [food row, P] corresponds to food P value
+  
+# Organize results
+my_lm_temp <- cbind(my_lm_adj.r.squared, my_lm_estimate, my_lm_std.error, my_lm_T.value, my_lm_P.value)
+# Set colnames and rownames
+colnames(my_lm_temp) <- c("adj.r.squared", "estimate", "Std.Error", "T.value","P")
+row.names(my_lm_temp) <- colnames(metabolite)
+# Data frame
+res_metabolite <- as.data.frame(my_lm_temp)
+
+# BH correction
+res_metabolite$p.adj <- stats::p.adjust(res_metabolite$P, method = "BH", n = n_metabolites)
+
+# Save
+res_metabolite_bd1 <- res_metabolite
+res_metabolite_bd2 <- res_metabolite
+res_metabolite_bd3 <- res_metabolite
+res_metabolite_bd4 <- res_metabolite
+```
+
+We are most interested in PC, LysPC, BA. 
+Note the chunk below in *interactive*. You can't just hit the green arrow!
+
+```{r}
+# Select bile acids and phosphatidylcholines
+colnames(dflongPk)
+# bileacids = 91-104
+# phosphatidylchohlines = 216-303
+# TMAO = 49
+# peakTMAO = 2
+# sex = 3
+# age = 4
+# blood draw = 9
+dflongPk_sub <- dflongPk[,c(2:4,9,49,91:104,216:303)]
+
+sub_bd1 <- dflongPk_sub[dflongPk_sub$Blood_Draw == "BD1",]
+sub_bd2 <- dflongPk_sub[dflongPk_sub$Blood_Draw == "BD2",]
+sub_bd3 <- dflongPk_sub[dflongPk_sub$Blood_Draw == "BD3",]
+sub_bd4 <- dflongPk_sub[dflongPk_sub$Blood_Draw == "BD4",]
+
+# Set limits
+colnames(dflongPk_sub)
+n_metabolites <- ncol(dflongPk_sub[,5:107])
+
+# Now run... some steps need to be changed to specify bd. Look for comments below indicating places to change accordingly
+# Change here with BD
+colnames(sub_bd1)
+metabolite <- sub_bd1[,5:107]
+metabolite <- sub_bd2[,5:107]
+metabolite <- sub_bd3[,5:107]
+metabolite <- sub_bd4[,5:107]
+
+# Check
+str(sub_bd1$sex)
+
+# Linear model
+my_lm <- lapply(1:n_metabolites, function(x) lm(metabolite[,x] ~ peakTMAO + sex*age, sub_bd4 )) # change bd with correct iteration
+
+# Get statistics
+my_lm_adj.r.squared <- sapply(my_lm, function(x){summary(x)$adj.r.squared})
+my_lm_estimate <- sapply(my_lm, function(x){summary(x)$coefficients[2,1]}) # [food row, estimate] corresponds to food B 
+my_lm_std.error <- sapply(my_lm, function(x){summary(x)$coefficients[2,2]}) # [food row, Std.Error] corresponds to food Std. Error 
+my_lm_T.value <- sapply(my_lm, function(x){summary(x)$coefficients[2,3]}) # [food row, T value] corresponds to food t value
+my_lm_P.value <- sapply(my_lm, function(x){summary(x)$coefficients[2,4]}) # [food row, P] corresponds to food P value
+  
+# Organize results
+my_lm_temp <- cbind(my_lm_adj.r.squared, my_lm_estimate, my_lm_std.error, my_lm_T.value, my_lm_P.value)
+# Set colnames and rownames
+colnames(my_lm_temp) <- c("adj.r.squared", "estimate", "Std.Error", "T.value","P")
+row.names(my_lm_temp) <- colnames(metabolite)
+# Data frame
+res_metabolite <- as.data.frame(my_lm_temp)
+
+# BH correction
+res_metabolite$p.adj <- stats::p.adjust(res_metabolite$P, method = "BH", n = n_metabolites)
+
+# Save
+res_metabolite_bd1_sub <- res_metabolite
+res_metabolite_bd2_sub <- res_metabolite
+res_metabolite_bd3_sub <- res_metabolite
+res_metabolite_bd4_sub <- res_metabolite
+
+res_metabolite_bd1_sub 
+res_metabolite_bd2_sub 
+res_metabolite_bd3_sub 
+res_metabolite_bd4_sub 
+# Bile acids are different by peak-TMAO group and by blood draw
+```
+
+Bile Acid Exploration:
+
+What is the relationship between bile acids and peak TMAO group? Correlation may be okay
+
+```{r}
+# Need AUC_TMAO_uM_hour combined with bile acid data by blood draw
+AUC_TMAO <- dfwide[,"AUC_TMAO_uM_hour",drop=FALSE]
+
+# Get BA df (all BDs)
+dflongPk_BA <- dflongPk[,c(1,3:4,9,91:104)]
+
+# merge AUC
+dflongPk_BA_AUC <- merge(AUC_TMAO, dflongPk_BA, by.x = 0, by.y = "Row.names", all.y = TRUE)
+
+# Still have to take a BD by BD approach
+sub_bd1 <- dflongPk_BA_AUC[dflongPk_BA_AUC$Blood_Draw == "BD1",]
+sub_bd2 <- dflongPk_BA_AUC[dflongPk_BA_AUC$Blood_Draw == "BD2",]
+sub_bd3 <- dflongPk_BA_AUC[dflongPk_BA_AUC$Blood_Draw == "BD3",]
+sub_bd4 <- dflongPk_BA_AUC[dflongPk_BA_AUC$Blood_Draw == "BD4",]
+
+# BD1
+colnames(sub_bd1)
+b=apply(sub_bd1[,c(2,6:19)],2,function(x){
+  cor.test(sub_bd1[,"AUC_TMAO_uM_hour"], x, method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.value")
+head(p.val)  
+r.cor <- sapply(b,"[[","estimate")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+AUC_cor_bd1 <- pr
+AUC_cor_bd1
+
+# BD2
+colnames(sub_bd2)
+b=apply(sub_bd2[,c(2,6:19)],2,function(x){
+  cor.test(sub_bd2[,"AUC_TMAO_uM_hour"], x, method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.value")
+head(p.val)  
+r.cor <- sapply(b,"[[","estimate")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+AUC_cor_bd2 <- pr
+AUC_cor_bd2
+
+# BD3
+colnames(sub_bd3)
+b=apply(sub_bd3[,c(2,6:19)],2,function(x){
+  cor.test(sub_bd3[,"AUC_TMAO_uM_hour"], x, method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.value")
+head(p.val)  
+r.cor <- sapply(b,"[[","estimate")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+AUC_cor_bd3 <- pr
+AUC_cor_bd3
+
+# BD4
+colnames(sub_bd4)
+b=apply(sub_bd4[,c(2,6:19)],2,function(x){
+  cor.test(sub_bd4[,"AUC_TMAO_uM_hour"], x, method="spearman", adjust="BH")
+})
+p.val <- sapply(b,"[[","p.value")
+head(p.val)  
+r.cor <- sapply(b,"[[","estimate")
+head(r.cor)
+p <- cbind(p.val)
+r <- cbind(r.cor)
+pr <- cbind(p,r)
+pr <- as.data.frame(pr)
+AUC_cor_bd4 <- pr
+AUC_cor_bd4
+```
+Bile acids do not correlate well to AUC-TMAO in the full cohort.
+
+Run lm adjusting for covariates.
+
+```{r}
+# Need AUC_TMAO_uM_hour combined with bile acid data by blood draw
+AUC_TMAO <- dfwide[,"AUC_TMAO_uM_hour",drop=FALSE]
+
+# Get BA df (all BDs)
+dflongPk_BA <- dflongPk[,c(1,3:4,9,91:104)]
+
+# merge AUC
+dflongPk_BA_AUC <- merge(AUC_TMAO, dflongPk_BA, by.x = 0, by.y = "Row.names", all.y = TRUE)
+
+# Still have to take a BD by BD approach
+sub_bd1 <- dflongPk_BA_AUC[dflongPk_BA_AUC$Blood_Draw == "BD1",]
+sub_bd2 <- dflongPk_BA_AUC[dflongPk_BA_AUC$Blood_Draw == "BD2",]
+sub_bd3 <- dflongPk_BA_AUC[dflongPk_BA_AUC$Blood_Draw == "BD3",]
+sub_bd4 <- dflongPk_BA_AUC[dflongPk_BA_AUC$Blood_Draw == "BD4",]
+
+# Set limits
+colnames(dflongPk_BA_AUC)
+n_metabolites <- ncol(dflongPk_BA_AUC[,6:19])
+
+# Now run... some steps need to be changed to specify bd. Look for comments below indicating places to change accordingly
+# Change here with BD
+metabolite <- sub_bd1[,6:19]
+my_lm <- lapply(1:n_metabolites, function(x) lm(metabolite[,x] ~ log(AUC_TMAO_uM_hour) + sex*age, sub_bd1 )) # change bd with correct iteration
+
+# Get statistics
+my_lm_adj.r.squared <- sapply(my_lm, function(x){summary(x)$adj.r.squared})
+my_lm_estimate <- sapply(my_lm, function(x){summary(x)$coefficients[2,1]}) # [food row, estimate] corresponds to food B 
+my_lm_std.error <- sapply(my_lm, function(x){summary(x)$coefficients[2,2]}) # [food row, Std.Error] corresponds to food Std. Error 
+my_lm_T.value <- sapply(my_lm, function(x){summary(x)$coefficients[2,3]}) # [food row, T value] corresponds to food t value
+my_lm_P.value <- sapply(my_lm, function(x){summary(x)$coefficients[2,4]}) # [food row, P] corresponds to food P value
+  
+# Organize results
+my_lm_temp <- cbind(my_lm_adj.r.squared, my_lm_estimate, my_lm_std.error, my_lm_T.value, my_lm_P.value)
+# Set colnames and rownames
+colnames(my_lm_temp) <- c("adj.r.squared", "estimate", "Std.Error", "T.value","P")
+row.names(my_lm_temp) <- colnames(metabolite)
+# Data frame
+res_metabolite <- as.data.frame(my_lm_temp)
+
+# BH correction
+res_metabolite$p.adj <- stats::p.adjust(res_metabolite$P, method = "BH", n = n_metabolites)
+
+# Save
+res_BA_bd1_sub <- res_metabolite
+```
+
+
+Plot differences of bile acids by peak TMAO group
+
+```{r}
+bileacids <- c("CA", "CDCA", "DCA", "GCA", "GCDCA", "GDCA", "GLCA", "GLCAS", "GUDCA", "TCA", "TCDCA", "TDCA", "TLCA", "TMCA")
+meta <- c("Row.names" ,"peakTMAO", "age", "sex", "Blood_Draw" )
+combo <- c(bileacids, meta)
+
+# Get data to graph
+ggdata <- dflongPk[,colnames(dflongPk) %in% combo]
+
+# Make blood draw numeric and showing the right relationships with regard to time
+ggdata$time_numeric <- ifelse(ggdata$Blood_Draw == "BD1", 0,
+                              ifelse(ggdata$Blood_Draw == "BD2", 30,
+                                     ifelse(ggdata$Blood_Draw == "BD3", 180, 360)))
+
+str(ggdata$time_numeric)
+
+# Plot
+ggplot(ggdata, aes(x = Blood_Draw, y = GCA, fill = peakTMAO)) +
+  geom_boxplot()
+
+ggplot(data = dflong, aes(x = Blood_Draw, y = GCA, fill = Blood_Draw)) +
+  geom_boxplot(notch = FALSE, outlier.colour = "red") +
+  xlab("Time (min)") + 
+  ylab("Metabolite") +
+  scale_y_continuous(trans='log2') +
+  theme(text=element_text(size=13)) + 
+  theme_light() +
+  stat_compare_means(comparisons = list(c("0","30"), c("0", "180"), c("0","360"), c("30", "180"), c("30","360"), c("180","360")), 
+  label = "p.format", method = "wilcox.test", paired=F) +
+  scale_fill_brewer(palette = "RdYlBu", name = "Time (min)") #Spectral
+  #ylim(0,75)
+
+# time scale data
+
+
+peak.labs <- c("Peak at 0 min", "Peak at 30 min", "Peak at 180 min", "Peak at 360 min")
+names(peak.labs) <- c("peak0", "peak30", "peak180", "peak360")
+
+# Shows individual responses
+#plotData$timepoint_min <- as.numeric(levels(plotData$timepoint_min))[plotData$timepoint_min]
+ggplot(ggdata, aes(x=Blood_Draw, y=GCA, group = Row.names, color = peakTMAO)) +
+ # geom_rect(alpha=0.2, aes(fill = peakTMAO), xmin = -Inf,xmax = Inf,ymin = -Inf, ymax = Inf) +
+  geom_line(alpha=0.4) + 
+  geom_point() +
+  stat_summary(aes(group = 1), geom = "point", fun = mean,
+    shape = 17, size = 3, color = "blue")+
+  facet_grid(peakTMAO ~ ., labeller = labeller(peakTMAO = peak.labs)) +
+  xlab("Time (min)") +
+  ylab(bquote("Bile Acid" ~mu~ "M")) +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  #scale_color_brewer(palette = "RdYlBu") +
+  scale_color_brewer(palette = "RdYlBu", name = "Peak TMAO Group", labels = c("Peak at 0 min", "Peak at 30 min", "Peak at 180 min", "Peak at 360 min")) +
+  ylim(0,4)
+
+# Show average responses by group
+colnames(dflongPk2)
+time_labels <- c("0 min", "30 min", "3 hr", "6 hr")
+
+mean_data <- dplyr::group_by(dflongPk2, peakTMAO, time_numeric) %>%
+             dplyr::summarise(bileacid = mean(GCA, na.rm = TRUE),
+                       bileacid_SD = sd(GCA, na.rm = TRUE))
+ggplot(mean_data, aes(x = time_numeric, y = bileacid, colour = peakTMAO)) +
+  geom_point() + 
+  geom_line() +
+  scale_x_continuous(breaks=c(0,30,180,360),labels=time_labels) 
+  #geom_errorbar(aes(x=time_numeric, ymin=bileacid-bileacid_SD, ymax=bileacid+bileacid_SD), width=0.2, alpha=0.5, size=.5)
+
+```
+
+Loop to see if phosphatidylcholines and other a priori metabolites change with response to the meal challenge.
+
+```{r}
+# Show average responses by group
+colnames(dflongPk2)
+vip <- dflongPk2[,c(91:104,216:303, 83, 339, 166, 595, 2, 1)]
+n <- ncol(vip) - 2
+time_labels <- c("0 min", "30 min", "3 hr", "6 hr")
+
+# n=4 # testing
+
+for(i in 1:n){
+  metab_name <- colnames(vip)[i]
+  mean_temp <- dplyr::group_by(vip, time_numeric, peakTMAO) %>%
+    dplyr::summarise(metabolite = mean(!!sym(metab_name), na.rm = TRUE)) # !!sym() because dplyr is weird
+              
+  ggtemp <- ggplot(mean_temp, aes(x = time_numeric, y = metabolite, color = peakTMAO)) +
+    geom_point() + 
+    geom_line() +
+    scale_x_continuous(breaks = c(0,30,180,360), labels = time_labels) +
+    ggtitle(paste0(metab_name))
+  
+  ggsave(paste0("../../plots/Metab_by_Time_by_PeakTMAO/", metab_name,"_xTime_xPeakTMAO.jpg"), ggtemp,
+       width = 8, 
+       height = 6, 
+       dpi = 300)
+}
+# THOSE ARE AWESOME GRAPHS
+
+# Try adding TMAO to the plot too
+vip2 <- dflongPk2[,c(49, 91:104,216:303, 83, 339, 166, 595, 2, 1)]
+n <- ncol(vip2) - 2
+for(i in 1:n){
+  metab_name <- colnames(vip2)[i]
+  
+  mean_temp <- dplyr::group_by(vip2, time_numeric, peakTMAO) %>%
+    dplyr::summarise(metabolite = mean(!!sym(metab_name), na.rm = TRUE)) # !!sym() because dplyr is weird
+  mean_temp$metabolite_name <- metab_name
+  
+  mean_temp_tmao <- dplyr::group_by(vip2, time_numeric, peakTMAO) %>%
+    dplyr::summarise(metabolite = mean(TMAO, na.rm = TRUE)) 
+  mean_temp_tmao$metabolite_name <- "TMAO"
+
+  # Plot  
+  ggtemp_metab <- ggplot(mean_temp, aes(x = time_numeric, y = metabolite, color = peakTMAO)) +
+    geom_point() + 
+    geom_line() +
+    theme_bw() +
+    theme(axis.title=element_text(size=14),
+        axis.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.text=element_text(size=12)) +
+    scale_x_continuous(breaks = c(0,30,180,360), labels = time_labels) +
+    scale_color_brewer(palette=c("RdYlBu"),
+                    name = "Peak TMAO Group",
+                    labels=c("Peak 0m", "Peak 30m", "Peak 3hr", "Peak 6hr")) +
+    ylab(paste0(metab_name)) +
+    xlab(NULL)
+  
+  ggtemp_tmao <- ggplot(mean_temp_tmao, aes(x = time_numeric, y = metabolite, color = peakTMAO)) +
+    geom_point() + 
+    geom_line() +
+    theme_bw() +
+    theme(axis.title=element_text(size=14),
+        axis.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.text=element_text(size=12)) +
+    scale_x_continuous(breaks = c(0,30,180,360), labels = time_labels) +
+    scale_color_brewer(palette=c("RdYlBu"),
+                    name = "Peak TMAO Group",
+                    labels=c("Peak 0m", "Peak 30m", "Peak 3hr", "Peak 6hr")) +
+    ylab("TMAO") +
+    xlab(NULL)
+  
+  ggarrange(ggtemp_metab, ggtemp_tmao, nrow = 2, ncol=1)
+  
+ ggsave(paste0("../../plots/Metab_by_Time_by_PeakTMAO_facetTMAO/", metab_name,"_xTime_xPeakTMAO_facet.jpg"),
+       width = 8, 
+       height = 6, 
+       dpi = 300)
+}
+# Again, awesome graphs
+
+
+# Try adding SEM to the graphs
+# SE
+se <- function(x) sqrt(var(x)/length(x))
+se(c(1,2,3,4))
+
+vip2 <- dflongPk2[,c(49, 91:104,216:303, 83, 339, 166, 595, 2, 1)]
+n <- ncol(vip2) - 2
+for(i in 1:n){
+  metab_name <- colnames(vip2)[i]
+  
+  mean_temp <- dplyr::group_by(vip2, time_numeric, peakTMAO) %>%
+    dplyr::summarise(metabolite = mean(!!sym(metab_name), na.rm = TRUE),
+                     metabolite_SEM = se(!!sym(metab_name))) # !!sym() because dplyr is weird
+  mean_temp$metabolite_name <- metab_name
+  
+  mean_temp_tmao <- dplyr::group_by(vip2, time_numeric, peakTMAO) %>%
+    dplyr::summarise(metabolite = mean(TMAO, na.rm = TRUE),
+                     metabolite_SEM = se(TMAO)) 
+  mean_temp_tmao$metabolite_name <- "TMAO"
+
+  # Plot  
+  ggtemp_metab <- ggplot(mean_temp, aes(x = time_numeric, y = metabolite, color = peakTMAO)) +
+    geom_point() + 
+    geom_line() +
+    scale_x_continuous(breaks = c(0,30,180,360), labels = time_labels) +
+    ylab(paste0(metab_name)) +
+    xlab(NULL) +
+    theme_bw() +
+    theme(axis.title=element_text(size=14),
+        axis.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.text=element_text(size=12)) +
+    scale_x_continuous(breaks = c(0,30,180,360), labels = time_labels) +
+    scale_color_brewer(palette=c("RdYlBu"),
+                    name = "Peak TMAO Group",
+                    labels=c("Peak 0m", "Peak 30m", "Peak 3hr", "Peak 6hr")) +
+    geom_errorbar(aes(x=time_numeric, ymin=metabolite-metabolite_SEM, ymax=metabolite+metabolite_SEM), width=0.2, alpha=0.5, size=.5)
+  
+  ggtemp_tmao <- ggplot(mean_temp_tmao, aes(x = time_numeric, y = metabolite, color = peakTMAO)) +
+    geom_point() + 
+    geom_line() +
+    scale_x_continuous(breaks = c(0,30,180,360), labels = time_labels) + 
+    theme_bw() +
+    theme(axis.title=element_text(size=14),
+        axis.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.text=element_text(size=12)) +
+    scale_x_continuous(breaks = c(0,30,180,360), labels = time_labels) +
+    scale_color_brewer(palette=c("RdYlBu"),
+                    name = "Peak TMAO Group",
+                    labels=c("Peak 0m", "Peak 30m", "Peak 3hr", "Peak 6hr")) +
+    ylab("TMAO") +
+    xlab(NULL) +
+    geom_errorbar(aes(x=time_numeric, ymin=metabolite-metabolite_SEM, ymax=metabolite+metabolite_SEM), width=0.2, alpha=0.5, size=.5)
+  
+  ggarrange(ggtemp_metab, ggtemp_tmao, nrow = 2, ncol=1)
+  
+ ggsave(paste0("../../plots/Metab_by_Time_by_PeakTMAO_facetTMAO_sem/", metab_name,"_xTime_xPeakTMAO_facet.jpg"),
+       width = 9, 
+       height = 6, 
+       dpi = 300)
+}
+
+```
+
+
